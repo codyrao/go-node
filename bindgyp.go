@@ -14,17 +14,24 @@ const bindingGypTemplate = `{
       "cflags!": [ "-fno-exceptions" ],
       "cflags_cc!": [ "-fno-exceptions" ],
       "sources": [ 
-        "wrapper.cc",
-        "build/callbacks.o"
+        "wrapper.cc"
       ],
       "msvs_settings": {
         "VCLinkerTool": {
           "AdditionalLibraryDirectories": [
             "$(ConfigurationPath)"
           ]
+        },
+        "VCResourceCompilerTool": {
+          "ResourceFileName": "$(IntDir)%(Filename).res"
         }
       },
       "conditions": [
+        ["OS=='win'", {
+          "sources": [
+            "{{.ModuleName}}.rc"
+          ]
+        }],
         ["OS=='linux'", {
           "cflags!": [ "-fno-exceptions" ],
           "cflags_cc!": [ "-fno-exceptions" ]

@@ -17,7 +17,11 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 		funcName := fn
 		jsName := toCamelCase(fn)
 
-		if strings.HasPrefix(fn, "Hello1") || strings.HasPrefix(fn, "Hello2") || strings.HasPrefix(fn, "Hello3") {
+		if strings.Contains(fn, "Callback") || strings.Contains(fn, "Register") || strings.Contains(fn, "Free") {
+			continue
+		}
+
+		if strings.HasSuffix(fn, "1") || strings.HasSuffix(fn, "2") || strings.HasSuffix(fn, "3") {
 			funcDecls += "typedef const char* (*" + funcName + "Fn)(const char*, const char*);\n" +
 				funcName + "Fn " + funcName + "Ptr = NULL;\n\n"
 
@@ -58,7 +62,7 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 				"        args.GetReturnValue().Set(String::NewFromUtf8(isolate, result).ToLocalChecked());\n" +
 				"    }\n" +
 				"}\n\n"
-		} else if strings.HasPrefix(fn, "Hello4") || strings.HasPrefix(fn, "Hello5") || strings.HasPrefix(fn, "Hello6") {
+		} else {
 			funcDecls += "typedef const char* (*" + funcName + "Fn)(const char*, const char*);\n" +
 				funcName + "Fn " + funcName + "Ptr = NULL;\n\n"
 
@@ -113,8 +117,70 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 #include <stdlib.h>
 #include <queue>
 #include <mutex>
+#include <fstream>
 
 using namespace v8;
+
+// External functions for embedded DLL
+extern "C" {
+    std::string ExtractEmbeddedDLL();
+    void CleanupEmbeddedDLL(const std::string& dllPath);
+}
+
+// Extract embedded DLL from resources
+std::string ExtractEmbeddedDLL() {
+    char tempPath[MAX_PATH];
+    DWORD result = GetTempPathA(MAX_PATH, tempPath);
+    if (result == 0 || result > MAX_PATH) {
+        return "";
+    }
+    
+    std::string dllPath = std::string(tempPath) + "` + moduleName + `.dll";
+    
+    // Get handle to current module
+    HMODULE hModule = NULL;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                             (LPCSTR)&ExtractEmbeddedDLL, &hModule)) {
+        return "";
+    }
+    
+    // Find the resource
+    HRSRC hRes = FindResourceA(hModule, "` + moduleName + `_DLL", RT_RCDATA);
+    if (hRes == NULL) {
+        return "";
+    }
+    
+    // Load the resource
+    HGLOBAL hLoaded = LoadResource(hModule, hRes);
+    if (hLoaded == NULL) {
+        return "";
+    }
+    
+    // Lock the resource to get a pointer to the data
+    void* pData = LockResource(hLoaded);
+    DWORD size = SizeofResource(hModule, hRes);
+    if (pData == NULL || size == 0) {
+        return "";
+    }
+    
+    // Write DLL to temp file
+    std::ofstream outFile(dllPath, std::ios::binary);
+    if (!outFile.is_open()) {
+        return "";
+    }
+    
+    outFile.write(reinterpret_cast<const char*>(pData), size);
+    outFile.close();
+    
+    return dllPath;
+}
+
+// Clean up temporary DLL
+void CleanupEmbeddedDLL(const std::string& dllPath) {
+    if (!dllPath.empty()) {
+        DeleteFileA(dllPath.c_str());
+    }
+}
 
 // Callback function type and global variable
 typedef void (*CallNodeCallbackType)(const char*, const char*);
@@ -265,33 +331,19 @@ void Initialize(Local<Object> exports) {
     // Initialize async handle
     InitializeAsyncHandle();
     
-    // Get path of current module (.node file)
-    char modulePath[MAX_PATH];
-    HMODULE hModule = NULL;
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                             (LPCSTR)&Initialize, &hModule)) {
-        GetModuleFileNameA(hModule, modulePath, MAX_PATH);
-        
-        // Get directory path
-        std::string modulePathStr(modulePath);
-        size_t lastSlash = modulePathStr.find_last_of("\\\\/");
-        if (lastSlash != std::string::npos) {
-            std::string moduleDir = modulePathStr.substr(0, lastSlash);
-            std::string dllPath = moduleDir + "\\\\" + "` + moduleName + `.dll";
-            hDLL = LoadLibraryA(dllPath.c_str());
-            if (hDLL == NULL) {
-                isolate->ThrowException(Exception::Error(
-                    String::NewFromUtf8(isolate, ("Failed to load " + dllPath).c_str()).ToLocalChecked()));
-                return;
-            }
-        } else {
-            isolate->ThrowException(Exception::Error(
-                String::NewFromUtf8(isolate, "Failed to get module directory").ToLocalChecked()));
-            return;
-        }
-    } else {
+    // Extract embedded DLL to temporary directory
+    std::string dllPath = ExtractEmbeddedDLL();
+    if (dllPath.empty()) {
         isolate->ThrowException(Exception::Error(
-            String::NewFromUtf8(isolate, "Failed to get module handle").ToLocalChecked()));
+            String::NewFromUtf8(isolate, "Failed to extract embedded DLL").ToLocalChecked()));
+        return;
+    }
+    
+    hDLL = LoadLibraryA(dllPath.c_str());
+    if (hDLL == NULL) {
+        CleanupEmbeddedDLL(dllPath);
+        isolate->ThrowException(Exception::Error(
+            String::NewFromUtf8(isolate, ("Failed to load " + dllPath).c_str()).ToLocalChecked()));
         return;
     }
     

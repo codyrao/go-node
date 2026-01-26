@@ -135,6 +135,10 @@ func run(cfg *Config) error {
 	fmt.Printf("找到导出函数: %v\n\n", functions)
 
 	fmt.Println("步骤3/4: 生成绑定文件...")
+	dllPath := filepath.Join(workDir, "build", cfg.ModuleName+".dll")
+	if err := generateResourceRC(tmpDir, cfg.ModuleName, dllPath); err != nil {
+		return err
+	}
 	if err := generateBindingGyp(tmpDir, cfg.ModuleName); err != nil {
 		return err
 	}
@@ -144,21 +148,11 @@ func run(cfg *Config) error {
 	fmt.Println()
 
 	fmt.Println("步骤4/4: 使用node-gyp编译...")
-	dllPath := filepath.Join(workDir, "build", cfg.ModuleName+".dll")
 	if err := runNodeGyp(tmpDir); err != nil {
 		return err
 	}
 
 	if err := buildWithNodeGyp(tmpDir, outputNodeDir); err != nil {
-		return err
-	}
-
-	if err := copyDLLToOutput(dllPath, outputNodeDir); err != nil {
-		return err
-	}
-
-	nodeFilePath := filepath.Join(outputNodeDir, cfg.ModuleName+".node")
-	if err := copyDLLToOutput(dllPath, nodeFilePath); err != nil {
 		return err
 	}
 	fmt.Println()

@@ -344,9 +344,10 @@ node test.js
 
 ```
 output/
-├── module_name.node    # Node.js原生模块
-└── module_name.dll     # Go动态库
+└── module_name.node    # Node.js原生模块（已嵌入Go动态库）
 ```
+
+**注意**：Go动态库已嵌入到.node文件中，运行时会自动提取到系统临时目录使用。
 
 ## 临时文件管理
 
