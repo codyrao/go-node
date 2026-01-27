@@ -24,6 +24,9 @@ const bindingGypTemplate = `{
         },
         "VCResourceCompilerTool": {
           "ResourceFileName": "$(IntDir)%(Filename).res"
+        },
+        "VCCLCompilerTool": {
+          "AdditionalOptions": [ "/wd4018" ]
         }
       },
       "conditions": [
@@ -58,7 +61,7 @@ func generateBindingGyp(workDir, moduleName string) error {
 
 	tmpl, err := template.New("binding.gyp").Parse(bindingGypTemplate)
 	if err != nil {
-		return fmt.Errorf("解析binding.gyp模板失败: %w", err)
+		return fmt.Errorf("Failed to parse binding.gyp template: %w", err)
 	}
 
 	data := BindingGypData{
@@ -67,14 +70,14 @@ func generateBindingGyp(workDir, moduleName string) error {
 
 	file, err := os.Create(bindingPath)
 	if err != nil {
-		return fmt.Errorf("创建binding.gyp文件失败: %w", err)
+		return fmt.Errorf("Failed to create binding.gyp file: %w", err)
 	}
 	defer file.Close()
 
 	if err := tmpl.Execute(file, data); err != nil {
-		return fmt.Errorf("写入binding.gyp内容失败: %w", err)
+		return fmt.Errorf("Failed to write binding.gyp content: %w", err)
 	}
 
-	fmt.Printf("生成binding.gyp: %s\n", bindingPath)
+	fmt.Printf("Generated binding.gyp: %s\n", bindingPath)
 	return nil
 }

@@ -17,7 +17,8 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 	if filepath.IsAbs(goFile) {
 		relPath, err := filepath.Rel(workDir, goFile)
 		if err != nil {
-			return fmt.Errorf("计算相对路径失败: %w", err)
+			fmt.Fprintf(os.Stderr, "Error: Failed to calculate relative path: %v\n", err)
+			return fmt.Errorf("calculate relative path failed: %w", err)
 		}
 		goFile = relPath
 	}
@@ -44,16 +45,18 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	fmt.Printf("编译Go代码为动态库: %s\n", dllPath)
-	fmt.Printf("工作目录: %s\n", workDir)
-	fmt.Printf("Go文件: %s\n", goFile)
+	fmt.Printf("Compiling Go code to shared library: %s\n", dllPath)
+	fmt.Printf("Working directory: %s\n", workDir)
+	fmt.Printf("Go file: %s\n", goFile)
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("编译Go动态库失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to compile Go shared library: %v\n", err)
+		return fmt.Errorf("compile Go shared library failed: %w", err)
 	}
 
 	if _, err := os.Stat(dllPath); os.IsNotExist(err) {
-		return fmt.Errorf("动态库文件未生成: %s", dllPath)
+		fmt.Fprintf(os.Stderr, "Error: Shared library file not generated: %s\n", dllPath)
+		return fmt.Errorf("shared library file not generated: %s", dllPath)
 	}
 
 	return nil
@@ -62,7 +65,7 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 func createBuildDirectory(workDir string) error {
 	buildDir := filepath.Join(workDir, "build")
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
-		return fmt.Errorf("创建build目录失败: %w", err)
+		return fmt.Errorf("Failed to create build directory: %w", err)
 	}
 	return nil
 }

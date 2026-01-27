@@ -59,7 +59,8 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 				"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +
 				"    \n" +
 				"    if (result != NULL) {\n" +
-				"        args.GetReturnValue().Set(String::NewFromUtf8(isolate, result).ToLocalChecked());\n" +
+				"        Local<Value> parsedResult = ParseJSONResult(isolate, result);\n" +
+				"        args.GetReturnValue().Set(parsedResult);\n" +
 				"    }\n" +
 				"}\n\n"
 		} else {
@@ -100,7 +101,8 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 				"    const char* result = " + funcName + "Ptr(arg1, callbackType);\n" +
 				"    \n" +
 				"    if (result != NULL) {\n" +
-				"        args.GetReturnValue().Set(String::NewFromUtf8(isolate, result).ToLocalChecked());\n" +
+				"        Local<Value> parsedResult = ParseJSONResult(isolate, result);\n" +
+				"        args.GetReturnValue().Set(parsedResult);\n" +
 				"    }\n" +
 				"}\n\n"
 		}
@@ -119,13 +121,9 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 #include <mutex>
 #include <fstream>
 
-using namespace v8;
+#pragma warning(disable: 4018)
 
-// External functions for embedded DLL
-extern "C" {
-    std::string ExtractEmbeddedDLL();
-    void CleanupEmbeddedDLL(const std::string& dllPath);
-}
+using namespace v8;
 
 // Extract embedded DLL from resources
 std::string ExtractEmbeddedDLL() {
@@ -185,6 +183,71 @@ void CleanupEmbeddedDLL(const std::string& dllPath) {
 // Callback function type and global variable
 typedef void (*CallNodeCallbackType)(const char*, const char*);
 CallNodeCallbackType gCallNodeCallback = NULL;
+
+// Parse JSON result and return appropriate type
+Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
+    if (jsonStr == NULL || strlen(jsonStr) == 0) {
+        return Null(isolate);
+    }
+    
+    Local<String> jsonString = String::NewFromUtf8(isolate, jsonStr).ToLocalChecked();
+    Local<Value> parsed;
+    Local<Context> context = isolate->GetCurrentContext();
+    
+    if (!v8::JSON::Parse(context, jsonString).ToLocal(&parsed)) {
+        return String::NewFromUtf8(isolate, jsonStr).ToLocalChecked();
+    }
+    
+    if (!parsed->IsObject()) {
+        return parsed;
+    }
+    
+    Local<Object> obj = parsed->ToObject(context).ToLocalChecked();
+    Local<String> typeKey = String::NewFromUtf8(isolate, "_type").ToLocalChecked();
+    
+    if (!obj->Has(context, typeKey).FromJust()) {
+        return parsed;
+    }
+    
+    Local<Value> typeValue = obj->Get(context, typeKey).ToLocalChecked();
+    if (!typeValue->IsString()) {
+        return parsed;
+    }
+    
+    Local<String> typeStr = typeValue->ToString(context).ToLocalChecked();
+    String::Utf8Value typeUtf8(isolate, typeStr);
+    std::string type(*typeUtf8);
+    
+    Local<String> valueKey = String::NewFromUtf8(isolate, "value").ToLocalChecked();
+    
+    if (!obj->Has(context, valueKey).FromJust()) {
+        return parsed;
+    }
+    
+    Local<Value> value = obj->Get(context, valueKey).ToLocalChecked();
+    
+    if (type == "object") {
+        return value;
+    } else if (type == "int") {
+        if (value->IsNumber()) {
+            return Number::New(isolate, value->NumberValue(context).FromJust());
+        }
+    } else if (type == "float") {
+        if (value->IsNumber()) {
+            return Number::New(isolate, value->NumberValue(context).FromJust());
+        }
+    } else if (type == "bool") {
+        if (value->IsBoolean()) {
+            return Boolean::New(isolate, value->BooleanValue(isolate));
+        }
+    } else if (type == "string") {
+        if (value->IsString()) {
+            return value;
+        }
+    }
+    
+    return parsed;
+}
 
 ` + funcDecls + `// Global variables
 HMODULE hDLL = NULL;

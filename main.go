@@ -30,24 +30,24 @@ func main() {
 
 func parseFlags() *Config {
 	cfg := &Config{}
-	flag.StringVar(&cfg.InputFile, "input", "", "输入的Go源文件路径")
-	flag.StringVar(&cfg.OutputDir, "output", "./output", "输出目录，默认./output")
-	flag.StringVar(&cfg.ModuleName, "name", "", "模块名称")
-	flag.StringVar(&cfg.PackageName, "package", "main", "Go包名，默认main（仅main包下的函数会被编译）")
-	flag.StringVar(&cfg.SourceDir, "source", "", "Go源文件所在目录")
-	flag.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "编译后不清理临时文件")
+	flag.StringVar(&cfg.InputFile, "input", "", "Input Go source file path")
+	flag.StringVar(&cfg.OutputDir, "output", "./output", "Output directory, default ./output")
+	flag.StringVar(&cfg.ModuleName, "name", "", "Module name")
+	flag.StringVar(&cfg.PackageName, "package", "main", "Go package name, default main (only functions in main package will be compiled)")
+	flag.StringVar(&cfg.SourceDir, "source", "", "Go source file directory")
+	flag.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Do not cleanup temporary files after compilation")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Go2Node - 将Go代码编译为Node.js原生模块
+		fmt.Fprintf(os.Stderr, `Go2Node - Compile Go code to Node.js native module
 
-用法:
-  go2node [选项]
+Usage:
+  go2node [options]
 
-选项:
+Options:
 `)
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, `
-示例:
+Examples:
   go2node -input=hello.go -name=hello
   go2node -input=hello.go -name=hello -output=./dist
 `)
@@ -60,11 +60,13 @@ func parseFlags() *Config {
 
 func run(cfg *Config) error {
 	if cfg.InputFile == "" {
-		return fmt.Errorf("请指定输入的Go源文件（-input）")
+		fmt.Fprintln(os.Stderr, "Error: Please specify input Go source file (-input)")
+		return fmt.Errorf("input file not specified")
 	}
 
 	if cfg.ModuleName == "" {
-		return fmt.Errorf("请指定模块名称（-name）")
+		fmt.Fprintln(os.Stderr, "Error: Please specify module name (-name)")
+		return fmt.Errorf("module name not specified")
 	}
 
 	if cfg.SourceDir == "" {
@@ -93,85 +95,100 @@ func run(cfg *Config) error {
 
 	outputNodeDir := cfg.OutputDir
 	if err := os.MkdirAll(outputNodeDir, 0755); err != nil {
-		return fmt.Errorf("创建输出目录失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to create output directory: %v\n", err)
+		return fmt.Errorf("create output directory failed: %w", err)
 	}
 
 	randomBytes := make([]byte, 8)
 	if _, err := rand.Read(randomBytes); err != nil {
-		return fmt.Errorf("生成随机ID失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to generate random ID: %v\n", err)
+		return fmt.Errorf("generate random ID failed: %w", err)
 	}
 	randomID := hex.EncodeToString(randomBytes)
 	tmpDir := filepath.Join(cfg.SourceDir, "go-node-tmp_"+randomID)
 	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		return fmt.Errorf("创建临时目录失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to create temp directory: %v\n", err)
+		return fmt.Errorf("create temp directory failed: %w", err)
 	}
+
+	defer func() {
+		if !cfg.NoCleanup {
+			fmt.Println("Cleaning up temporary files...")
+			if err := cleanupBuild(workDir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to cleanup build directory: %v\n", err)
+			}
+			if err := os.RemoveAll(tmpDir); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to cleanup temp directory: %v\n", err)
+			} else {
+				fmt.Printf("Deleted temp directory: %s\n", tmpDir)
+			}
+		}
+	}()
 
 	workDir, _ = filepath.Abs(workDir)
 	tmpDirAbs, _ := filepath.Abs(tmpDir)
-	fmt.Printf("工作目录: %s\n", workDir)
-	fmt.Printf("临时目录: %s\n\n", tmpDirAbs)
+	fmt.Printf("Working directory: %s\n", workDir)
+	fmt.Printf("Temporary directory: %s\n\n", tmpDirAbs)
 
 	if err := cleanupBuild(workDir); err != nil {
-		return fmt.Errorf("清理build目录失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to cleanup build directory: %v\n", err)
+		return fmt.Errorf("cleanup build directory failed: %w", err)
 	}
 
-	fmt.Println("步骤1/4: 编译Go代码为动态库...")
+	fmt.Println("Step 1/4: Compiling Go code to shared library...")
 	if err := createBuildDirectory(workDir); err != nil {
-		return fmt.Errorf("创建build目录失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to create build directory: %v\n", err)
+		return fmt.Errorf("create build directory failed: %w", err)
 	}
 	if err := buildGoSharedLibrary(cfg, workDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
 	fmt.Println()
 
-	fmt.Println("步骤2/4: 解析Go导出函数...")
+	fmt.Println("Step 2/4: Parsing Go export functions...")
 	functions, err := parseGoExports(absInputFile)
 	if err != nil {
-		return fmt.Errorf("解析Go导出函数失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to parse Go export functions: %v\n", err)
+		return fmt.Errorf("parse Go export functions failed: %w", err)
 	}
 	if len(functions) == 0 {
-		return fmt.Errorf("未找到任何导出函数（使用 //export 标记）")
+		fmt.Fprintln(os.Stderr, "Error: No export functions found (use //export to mark functions)")
+		return fmt.Errorf("no export functions found")
 	}
-	fmt.Printf("找到导出函数: %v\n\n", functions)
+	fmt.Printf("Found export functions: %v\n\n", functions)
 
-	fmt.Println("步骤3/4: 生成绑定文件...")
+	fmt.Println("Step 3/4: Generating binding files...")
 	dllPath := filepath.Join(workDir, "build", cfg.ModuleName+".dll")
 	if err := generateResourceRC(tmpDir, cfg.ModuleName, dllPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
 	if err := generateBindingGyp(tmpDir, cfg.ModuleName); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
 	if err := generateWrapperCC(tmpDir, cfg.ModuleName, functions); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
 	fmt.Println()
 
-	fmt.Println("步骤4/4: 使用node-gyp编译...")
+	fmt.Println("Step 4/4: Compiling with node-gyp...")
 	if err := runNodeGyp(tmpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
 
 	if err := buildWithNodeGyp(tmpDir, outputNodeDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
 	fmt.Println()
 
-	if !cfg.NoCleanup {
-		fmt.Println("清理临时文件...")
-		if err := cleanupBuild(workDir); err != nil {
-			fmt.Printf("警告: 清理build目录失败: %v\n", err)
-		}
-		if err := os.RemoveAll(tmpDir); err != nil {
-			fmt.Printf("警告: 清理临时目录失败: %v\n", err)
-		} else {
-			fmt.Printf("已删除临时目录: %s\n", tmpDir)
-		}
-	}
-
 	fmt.Println("========================")
-	fmt.Printf("编译完成!\n")
-	fmt.Printf("输出文件:\n")
+	fmt.Println("Compilation completed!")
+	fmt.Println("Output files:")
 	fmt.Printf("  - %s\n", filepath.Join(outputNodeDir, cfg.ModuleName+".node"))
 	fmt.Println("========================")
 

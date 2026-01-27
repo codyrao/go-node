@@ -17,14 +17,14 @@ func generateResourceRC(workDir, moduleName string, dllPath string) error {
 
 	file, err := os.Create(resourcePath)
 	if err != nil {
-		return fmt.Errorf("创建resource.rc文件失败: %w", err)
+		return fmt.Errorf("Failed to create resource.rc file: %w", err)
 	}
 	defer file.Close()
 
 	if _, err := file.WriteString(content); err != nil {
-		return fmt.Errorf("写入resource.rc内容失败: %w", err)
+		return fmt.Errorf("Failed to write resource.rc content: %w", err)
 	}
 
-	fmt.Printf("生成resource.rc: %s\n", resourcePath)
+	fmt.Printf("Generated resource.rc: %s\n", resourcePath)
 	return nil
 }

@@ -12,12 +12,14 @@ func buildWithNodeGyp(workDir, outputNodeDir string) error {
 	releaseDir := filepath.Join(workDir, "build", "Release")
 
 	if _, err := os.Stat(releaseDir); err != nil {
-		return fmt.Errorf("Release目录不存在: %s", releaseDir)
+		fmt.Fprintf(os.Stderr, "Error: Release directory does not exist: %s\n", releaseDir)
+		return fmt.Errorf("Release directory does not exist: %s", releaseDir)
 	}
 	
 	files, err := os.ReadDir(releaseDir)
 	if err != nil {
-		return fmt.Errorf("读取Release目录失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to read Release directory: %v\n", err)
+		return fmt.Errorf("read Release directory failed: %w", err)
 	}
 	
 	var nodeFileName string
@@ -29,17 +31,19 @@ func buildWithNodeGyp(workDir, outputNodeDir string) error {
 	}
 	
 	if nodeFileName == "" {
-		return fmt.Errorf("未找到.node文件")
+		fmt.Fprintln(os.Stderr, "Error: .node file not found")
+		return fmt.Errorf(".node file not found")
 	}
 	
 	srcNode := filepath.Join(releaseDir, nodeFileName)
 	dstNode := filepath.Join(outputNodeDir, nodeFileName)
 	
 	if err := copyFile(srcNode, dstNode); err != nil {
-		return fmt.Errorf("复制.node文件失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to copy .node file: %v\n", err)
+		return fmt.Errorf("copy .node file failed: %w", err)
 	}
 	
-	fmt.Printf("复制.node文件到: %s\n", dstNode)
+	fmt.Printf("Copied .node file to: %s\n", dstNode)
 	return nil
 }
 
@@ -56,9 +60,10 @@ func runNodeGyp(workDir string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	fmt.Printf("运行node-gyp configure...\n")
+	fmt.Println("Running node-gyp configure...")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("node-gyp configure失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: node-gyp configure failed: %v\n", err)
+		return fmt.Errorf("node-gyp configure failed: %w", err)
 	}
 
 	args = []string{
@@ -70,9 +75,10 @@ func runNodeGyp(workDir string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	fmt.Printf("运行node-gyp build...\n")
+	fmt.Println("Running node-gyp build...")
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("node-gyp build失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: node-gyp build failed: %v\n", err)
+		return fmt.Errorf("node-gyp build failed: %w", err)
 	}
 
 	return nil
@@ -86,9 +92,10 @@ func copyDLLToOutput(srcDLL, dstPath string) error {
 	dstDLL := filepath.Join(dstDir, filepath.Base(srcDLL))
 	
 	if err := copyFile(srcDLL, dstDLL); err != nil {
-		return fmt.Errorf("复制DLL文件失败: %w", err)
+		fmt.Fprintf(os.Stderr, "Error: Failed to copy DLL file: %v\n", err)
+		return fmt.Errorf("copy DLL file failed: %w", err)
 	}
 	
-	fmt.Printf("复制DLL文件到: %s\n", dstDLL)
+	fmt.Printf("Copied DLL file to: %s\n", dstDLL)
 	return nil
 }

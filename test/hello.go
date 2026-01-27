@@ -29,14 +29,12 @@ var gCallNodeCallback uintptr
 //export RegisterGoCallback
 func RegisterGoCallback(fn uintptr) {
 	gCallNodeCallback = fn
-	fmt.Println("Go: RegisterGoCallback called, fn=", fn)
 }
 
 //export Hello1
 func Hello1(name *C.char, value *C.char) *C.char {
 	nameStr := C.GoString(name)
 	valueStr := C.GoString(value)
-	fmt.Printf("Go: Hello1 called with name=%s, value=%s\n", nameStr, valueStr)
 
 	valueInt, _ := strconv.Atoi(valueStr)
 	result := valueInt * 2
@@ -55,7 +53,6 @@ func Hello1(name *C.char, value *C.char) *C.char {
 func Hello2(name *C.char, value *C.char) *C.char {
 	nameStr := C.GoString(name)
 	valueStr := C.GoString(value)
-	fmt.Printf("Go: Hello2 called with name=%s, value=%s\n", nameStr, valueStr)
 
 	valueFloat, _ := strconv.ParseFloat(valueStr, 64)
 	result := valueFloat * 1.5
@@ -74,7 +71,6 @@ func Hello2(name *C.char, value *C.char) *C.char {
 func Hello3(name *C.char, value *C.char) *C.char {
 	nameStr := C.GoString(name)
 	valueStr := C.GoString(value)
-	fmt.Printf("Go: Hello3 called with name=%s, value=%s\n", nameStr, valueStr)
 
 	valueFloat, _ := strconv.ParseFloat(valueStr, 64)
 	result := valueFloat > 0.0
@@ -92,8 +88,6 @@ func Hello3(name *C.char, value *C.char) *C.char {
 //export Hello4
 func Hello4(name *C.char, callbackType *C.char) *C.char {
 	nameStr := C.GoString(name)
-	cbType := C.GoString(callbackType)
-	fmt.Printf("Go: Hello4 called with name=%s, callbackType=%s\n", nameStr, cbType)
 
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(nameStr), &inputData)
@@ -106,7 +100,6 @@ func Hello4(name *C.char, callbackType *C.char) *C.char {
 	if gCallNodeCallback != 0 {
 		for i := 1; i <= 3; i++ {
 			time.Sleep(300 * time.Millisecond)
-			fmt.Printf("Go: Hello4 Triggering callback #%d\n", i)
 
 			callbackData := map[string]interface{}{
 				"test":   testMsg,
@@ -130,8 +123,6 @@ func Hello4(name *C.char, callbackType *C.char) *C.char {
 //export Hello5
 func Hello5(name *C.char, callbackType *C.char) *C.char {
 	nameStr := C.GoString(name)
-	cbType := C.GoString(callbackType)
-	fmt.Printf("Go: Hello5 called with name=%s, callbackType=%s\n", nameStr, cbType)
 
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(nameStr), &inputData)
@@ -144,7 +135,6 @@ func Hello5(name *C.char, callbackType *C.char) *C.char {
 	go func() {
 		for i := 1; i <= 5; i++ {
 			time.Sleep(500 * time.Millisecond)
-			fmt.Printf("Go: Hello5 Triggering async callback #%d\n", i)
 
 			callbackData := map[string]interface{}{
 				"test":   testMsg,
@@ -168,8 +158,6 @@ func Hello5(name *C.char, callbackType *C.char) *C.char {
 //export Hello6
 func Hello6(name *C.char, callbackType *C.char) *C.char {
 	nameStr := C.GoString(name)
-	cbType := C.GoString(callbackType)
-	fmt.Printf("Go: Hello6 called with name=%s, callbackType=%s\n", nameStr, cbType)
 
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(nameStr), &inputData)
@@ -183,7 +171,6 @@ func Hello6(name *C.char, callbackType *C.char) *C.char {
 		i := 1
 		for {
 			time.Sleep(1000 * time.Millisecond)
-			fmt.Printf("Go: Hello6 Triggering infinite callback #%d\n", i)
 
 			callbackData := map[string]interface{}{
 				"test":   testMsg,
@@ -201,6 +188,136 @@ func Hello6(name *C.char, callbackType *C.char) *C.char {
 		"result": "Infinite async started",
 	}
 	resultJson, _ := json.Marshal(resultData)
+
+	return C.CString(string(resultJson))
+}
+
+//export ReturnString
+func ReturnString(name *C.char, value *C.char) *C.char {
+	nameStr := C.GoString(name)
+	valueStr := C.GoString(value)
+
+	result := map[string]interface{}{
+		"_type": "string",
+		"value": "Hello " + nameStr + ", your value is " + valueStr,
+	}
+	resultJson, _ := json.Marshal(result)
+
+	return C.CString(string(resultJson))
+}
+
+//export ReturnInt
+func ReturnInt(name *C.char, value *C.char) *C.char {
+	valueStr := C.GoString(value)
+
+	var valueInt int
+	fmt.Sscanf(valueStr, "%d", &valueInt)
+
+	result := map[string]interface{}{
+		"_type": "int",
+		"value": valueInt * 2,
+	}
+	resultJson, _ := json.Marshal(result)
+
+	return C.CString(string(resultJson))
+}
+
+//export ReturnFloat
+func ReturnFloat(name *C.char, value *C.char) *C.char {
+	valueStr := C.GoString(value)
+
+	var valueFloat float64
+	fmt.Sscanf(valueStr, "%f", &valueFloat)
+
+	result := map[string]interface{}{
+		"_type": "float",
+		"value": valueFloat * 1.5,
+	}
+	resultJson, _ := json.Marshal(result)
+
+	return C.CString(string(resultJson))
+}
+
+//export ReturnBool
+func ReturnBool(name *C.char, value *C.char) *C.char {
+	valueStr := C.GoString(value)
+
+	var valueFloat float64
+	fmt.Sscanf(valueStr, "%f", &valueFloat)
+
+	result := map[string]interface{}{
+		"_type": "bool",
+		"value": valueFloat > 0.0,
+	}
+	resultJson, _ := json.Marshal(result)
+
+	return C.CString(string(resultJson))
+}
+
+//export ReturnObject
+func ReturnObject(name *C.char, value *C.char) *C.char {
+	nameStr := C.GoString(name)
+	valueStr := C.GoString(value)
+
+	var valueInt int
+	fmt.Sscanf(valueStr, "%d", &valueInt)
+
+	result := map[string]interface{}{
+		"_type": "object",
+		"value": map[string]interface{}{
+			"name":     nameStr,
+			"age":      valueInt,
+			"isActive": true,
+			"scores":   []int{85, 90, 78},
+			"address": map[string]string{
+				"city":    "Beijing",
+				"country": "China",
+			},
+		},
+	}
+	resultJson, _ := json.Marshal(result)
+
+	return C.CString(string(resultJson))
+}
+
+//export ReturnNestedObject
+func ReturnNestedObject(name *C.char, value *C.char) *C.char {
+	nameStr := C.GoString(name)
+
+	result := map[string]interface{}{
+		"_type": "object",
+		"value": map[string]interface{}{
+			"user": map[string]interface{}{
+				"name": nameStr,
+				"age":  30,
+			},
+			"metadata": map[string]interface{}{
+				"created": "2024-01-01",
+				"tags":    []string{"tag1", "tag2"},
+			},
+			"items": []map[string]interface{}{
+				{"id": 1, "name": "Item 1"},
+				{"id": 2, "name": "Item 2"},
+				{"id": 3, "name": "Item 3"},
+			},
+		},
+	}
+	resultJson, _ := json.Marshal(result)
+
+	return C.CString(string(resultJson))
+}
+
+//export ReturnWithCallback
+func ReturnWithCallback(name *C.char, callbackType *C.char) *C.char {
+	if gCallNodeCallback != 0 {
+		C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("test_callback"), C.CString(`{"message":"Callback from Go"}`))
+	}
+
+	result := map[string]interface{}{
+		"_type": "string",
+		"value": "Callback triggered",
+	}
+	resultJson, _ := json.Marshal(result)
 
 	return C.CString(string(resultJson))
 }
