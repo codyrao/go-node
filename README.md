@@ -9,6 +9,10 @@ A command-line tool implemented in Go that compiles Go code into Node.js callabl
 - **Callback support**: Supports calling Node.js callback functions from Go (synchronous and asynchronous)
 - **Multi-type return support**: Supports returning multiple Node.js types (object, int, float, bool, string)
 - **Object return support**: Supports returning JSON-formatted nested JavaScript objects
+- **Array parameter support**: Supports passing JavaScript arrays as JSON strings to Go functions
+- **Object parameter support**: Supports passing JavaScript objects as JSON strings to Go functions
+- **Automatic callback JSON parsing**: Automatically parses JSON strings to JavaScript objects in callbacks
+- **Flexible DLL loading**: Supports loading DLL from local directory or embedded resources
 - **Flexible configuration**: Supports custom output directory and module name
 - **Temporary file management**: Automatically manages temporary files with random IDs to avoid conflicts
 
@@ -82,6 +86,26 @@ go-node -input=hello.go -name=hello -output=./dist
 # Do not clean up temporary files (for debugging)
 go-node -input=hello.go -name=hello -no-cleanup
 ```
+
+### Output Files
+
+After successful compilation, the following files will be generated in the output directory:
+
+| File | Description |
+|------|-------------|
+| `module_name.node` | Node.js native module (can be directly required in Node.js) |
+| `module_name.dll` | Go DLL (for standalone use or debugging) |
+
+The `.node` file contains an embedded DLL and can be used independently. The `.dll` file is also provided for debugging or direct use.
+
+### DLL Loading Mechanism
+
+The tool uses a flexible DLL loading strategy:
+
+1. **Primary**: Attempts to load DLL from the same directory as the `.node` file
+2. **Fallback**: If not found, attempts to extract DLL from embedded resources in the `.node` file
+
+This ensures reliable loading in various deployment scenarios.
 
 ## Go Code Writing Guidelines
 
@@ -392,6 +416,223 @@ console.log(nestedResult.items[0].name)  // "Item 1"
 | `_type: "object"` | object | JavaScript object (supports nesting) |
 
 Note: If the returned JSON does not contain the `_type` field, the JSON-parsed raw object will be returned directly.
+
+### Parameter Type Support
+
+Go functions support multiple parameter types, including: string, array, and object.
+
+#### Supported Parameter Types
+
+**1. String Type (string)**
+```go
+//export Hello1
+func Hello1(name *C.char, value *C.char) *C.char {
+    nameStr := C.GoString(name)
+    valueStr := C.GoString(value)
+
+    result := map[string]interface{}{
+        "name":   nameStr,
+        "value":  valueStr,
+        "result": "success",
+    }
+    jsonBytes, _ := json.Marshal(result)
+    return C.CString(string(jsonBytes))
+}
+```
+
+**2. Array Type (array)**
+```go
+//export ProcessArray
+func ProcessArray(jsonArray *C.char) *C.char {
+    arrayStr := C.GoString(jsonArray)
+
+    var arrayData []interface{}
+    if err := json.Unmarshal([]byte(arrayStr), &arrayData); err != nil {
+        result := map[string]interface{}{
+            "_type": "error",
+            "value": "Failed to parse array: " + err.Error(),
+        }
+        resultJson, _ := json.Marshal(result)
+        return C.CString(string(resultJson))
+    }
+
+    // Process array - sum numbers, count strings, etc.
+    var sum float64
+    var count int
+    var strings []string
+
+    for _, item := range arrayData {
+        switch v := item.(type) {
+        case float64:
+            sum += v
+            count++
+        case string:
+            strings = append(strings, v)
+            count++
+        case int:
+            sum += float64(v)
+            count++
+        }
+    }
+
+    result := map[string]interface{}{
+        "_type": "object",
+        "value": map[string]interface{}{
+            "originalArray": arrayData,
+            "itemCount":     count,
+            "sum":           sum,
+            "strings":       strings,
+            "processed":     true,
+        },
+    }
+
+    resultJson, _ := json.Marshal(result)
+    return C.CString(string(resultJson))
+}
+```
+
+**3. Object Type (object)**
+```go
+//export ProcessObject
+func ProcessObject(jsonObject *C.char) *C.char {
+    objectStr := C.GoString(jsonObject)
+
+    var objectData map[string]interface{}
+    if err := json.Unmarshal([]byte(objectStr), &objectData); err != nil {
+        result := map[string]interface{}{
+            "_type": "error",
+            "value": "Failed to parse object: " + err.Error(),
+        }
+        resultJson, _ := json.Marshal(result)
+        return C.CString(string(resultJson))
+    }
+
+    // Process object - extract and transform data
+    processed := map[string]interface{}{
+        "processed": true,
+        "timestamp": time.Now().Unix(),
+    }
+
+    // Copy all original fields
+    for key, value := range objectData {
+        processed[key] = value
+    }
+
+    // Add some computed fields
+    if name, ok := objectData["name"].(string); ok {
+        processed["nameLength"] = len(name)
+        processed["nameUpperCase"] = strings.ToUpper(name)
+    }
+
+    if age, ok := objectData["age"].(float64); ok {
+        processed["isAdult"] = age >= 18
+        processed["ageInDays"] = int(age * 365)
+    }
+
+    if items, ok := objectData["items"].([]interface{}); ok {
+        processed["itemCount"] = len(items)
+    }
+
+    result := map[string]interface{}{
+        "_type": "object",
+        "value": processed,
+    }
+
+    resultJson, _ := json.Marshal(result)
+    return C.CString(string(resultJson))
+}
+```
+
+#### Node.js Usage
+
+```javascript
+const demoaddon = require('./output/hello.node')
+
+// String type
+const strResult = demoaddon.Hello1("Test", "10")
+console.log(strResult)
+
+// Array type
+const arrayResult = demoaddon.ProcessArray([1, 2, 3, 4, 5, "hello", "world"])
+console.log(arrayResult)
+console.log(arrayResult.itemCount)  // 7
+console.log(arrayResult.sum)  // 15
+
+// Object type
+const objectResult = demoaddon.ProcessObject({
+    name: "Alice",
+    age: 25,
+    email: "alice@example.com",
+    items: ["item1", "item2", "item3"],
+    active: true
+})
+console.log(objectResult)
+console.log(objectResult.nameLength)  // 5
+console.log(objectResult.isAdult)  // true
+console.log(objectResult.itemCount)  // 3
+```
+
+#### Parameter Type Conversion Rules
+
+| Node.js Parameter Type | Go Parameter Type | Description |
+|----------------------|-------------------|-------------|
+| string | *C.char | JavaScript string converted to C string |
+| array | *C.char | JavaScript array converted to JSON string |
+| object | *C.char | JavaScript object converted to JSON string |
+
+Note: All parameter types are converted to JSON strings and passed to Go functions. Go functions need to use `json.Unmarshal` to parse the data.
+
+### Callback JSON Parsing
+
+When Go calls back to Node.js, if the callback data is a JSON string, it will be automatically parsed into a JavaScript object.
+
+#### Go Code
+
+```go
+//export ReturnWithObjectCallback
+func ReturnWithObjectCallback(name *C.char, callbackType *C.char) *C.char {
+    if gCallNodeCallback != 0 {
+        callbackData := map[string]interface{}{
+            "message": "Object callback from Go",
+            "status":  "success",
+            "user": map[string]interface{}{
+                "id":       456,
+                "username": C.GoString(name),
+                "email":    "test@example.com",
+                "roles":    []string{"admin", "user"},
+            },
+            "timestamp": time.Now().Unix(),
+        }
+        jsonData, _ := json.Marshal(callbackData)
+        C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("object_callback"), C.CString(string(jsonData)))
+    }
+
+    result := map[string]interface{}{
+        "_type": "string",
+        "value": "Object callback triggered",
+    }
+    resultJson, _ := json.Marshal(result)
+
+    return C.CString(string(resultJson))
+}
+```
+
+#### Node.js Usage
+
+```javascript
+const demoaddon = require('./output/hello.node')
+
+demoaddon.ReturnWithObjectCallback("TestUser", "object_callback", function(callbackType, jsonData) {
+    console.log('Callback type:', callbackType)
+    console.log('Callback data:', jsonData)
+    console.log('Callback data type:', typeof jsonData)
+    console.log('User ID:', jsonData.user.id)
+    console.log('Username:', jsonData.user.username)
+    console.log('Roles:', jsonData.user.roles)
+})
+```
+
+Note: The callback data is automatically parsed from JSON string to JavaScript object. If parsing fails, the original string is returned.
 
 ## Node.js Usage
 

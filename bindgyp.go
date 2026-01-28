@@ -14,7 +14,8 @@ const bindingGypTemplate = `{
       "cflags!": [ "-fno-exceptions" ],
       "cflags_cc!": [ "-fno-exceptions" ],
       "sources": [ 
-        "wrapper.cc"
+        "wrapper.cc",
+        "{{.ModuleName}}.dll"
       ],
       "msvs_settings": {
         "VCLinkerTool": {
@@ -32,6 +33,7 @@ const bindingGypTemplate = `{
       "conditions": [
         ["OS=='win'", {
           "sources": [
+            "wrapper.cc",
             "{{.ModuleName}}.rc"
           ]
         }],

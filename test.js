@@ -27,6 +27,12 @@ const params4 = {
 }
 const result4 = demoaddon.Hello4(JSON.stringify(params4), function(callbackType, jsonData) {
     console.log('   回调 [Hello4]:', callbackType, '->', jsonData)
+    if (typeof jsonData === 'object') {
+        console.log('   回调数据类型: object')
+        console.log('   回调数据:', JSON.stringify(jsonData))
+    } else {
+        console.log('   回调数据类型:', typeof jsonData)
+    }
 })
 console.log('   结果:', result4)
 console.log()
@@ -38,6 +44,12 @@ const params5 = {
 }
 const result5 = demoaddon.Hello5(JSON.stringify(params5), function(callbackType, jsonData) {
     console.log('   回调 [Hello5]:', callbackType, '->', jsonData)
+    if (typeof jsonData === 'object') {
+        console.log('   回调数据类型: object')
+        console.log('   回调数据:', JSON.stringify(jsonData))
+    } else {
+        console.log('   回调数据类型:', typeof jsonData)
+    }
 })
 console.log('   结果:', result5)
 console.log('   等待异步回调...\n')
@@ -47,11 +59,17 @@ console.log('测试6: Hello6 - 同步调用-异步无限次回调 (已禁用)')
 const params6 = {
     test: "Hello6 Test"
 }
-// const result6 = demoaddon.Hello6(JSON.stringify(params6), function(callbackType, jsonData) {
-//     console.log('   回调 [Hello6]:', callbackType, '->', jsonData)
-// })
-// console.log('   结果:', result6)
-// console.log('   等待无限异步回调...\n')
+const result6 = demoaddon.Hello6(JSON.stringify(params6), function(callbackType, jsonData) {
+    console.log('   回调 [Hello6]:', callbackType, '->', jsonData)
+    if (typeof jsonData === 'object') {
+        console.log('   回调数据类型: object')
+        console.log('   回调数据:', JSON.stringify(jsonData))
+    } else {
+        console.log('   回调数据类型:', typeof jsonData)
+    }
+})
+console.log('   结果:', result6)
+console.log('   等待无限异步回调...\n')
 
 // 测试7: 返回字符串类型
 console.log('测试7: ReturnString - 返回字符串类型')
@@ -102,6 +120,59 @@ console.log('   user.name:', result12.user.name)
 console.log('   user.age:', result12.user.age)
 console.log('   metadata:', result12.metadata)
 console.log('   items:', result12.items)
+console.log()
+
+// 测试13: 数组参数 - ProcessArray
+console.log('测试13: ProcessArray - 数组参数处理')
+const testArray13 = [1, 2, 3, 4, 5, "hello", "world"]
+const result13 = demoaddon.ProcessArray(testArray13)
+console.log('   输入:', testArray13)
+console.log('   结果:', result13)
+console.log('   类型:', typeof result13)
+console.log()
+
+// 测试14: 数组参数 - FilterArray (对象数组)
+console.log('测试14: FilterArray - 对象数组过滤')
+const testArray14 = [
+    { name: "Alice", age: 25 },
+    { name: "Bob", age: 17 },
+    { name: "Charlie", age: 30 },
+    { name: "David", age: 16 },
+    { name: "Eve", age: 22 }
+]
+const result14 = demoaddon.FilterArray(testArray14)
+console.log('   输入:', JSON.stringify(testArray14))
+console.log('   结果:', result14)
+console.log('   类型:', typeof result14)
+console.log('   过滤后数量:', result14.length)
+console.log()
+
+// 测试15: 回调返回 object 类型 - ReturnWithObjectCallback
+console.log('测试15: ReturnWithObjectCallback - 回调返回 object 类型')
+const result15 = demoaddon.ReturnWithObjectCallback("TestUser", "object_callback")
+console.log('   结果:', result15)
+console.log('   类型:', typeof result15)
+console.log()
+
+// 测试16: object 参数 - ProcessObject
+console.log('测试16: ProcessObject - object 参数处理')
+const testObject16 = {
+    name: "Alice",
+    age: 25,
+    email: "alice@example.com",
+    items: ["item1", "item2", "item3"],
+    active: true
+}
+const result16 = demoaddon.ProcessObject(testObject16)
+console.log('   输入:', JSON.stringify(testObject16))
+console.log('   结果:', result16)
+console.log('   类型:', typeof result16)
+console.log('   processed:', result16.processed)
+console.log('   nameLength:', result16.nameLength)
+console.log('   nameUpperCase:', result16.nameUpperCase)
+console.log('   isAdult:', result16.isAdult)
+console.log('   ageInDays:', result16.ageInDays)
+console.log('   itemCount:', result16.itemCount)
 console.log()
 
 console.log('=== 基础测试完成 ===')

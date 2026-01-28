@@ -2,24 +2,14 @@ package main
 
 /*
 #cgo CFLAGS: -I.
-#include <stdlib.h>
-#include <stdint.h>
-#include <windows.h>
-#include <string.h>
-
-typedef void (*CallbackFunc)(const char*, const char*);
-
-static void callCallback(void* ptr, const char* callbackType, const char* data) {
-    if (ptr != NULL) {
-        ((CallbackFunc)ptr)(callbackType, data);
-    }
-}
+#include "callback.h"
 */
 import "C"
 import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 	"unsafe"
 )
@@ -168,18 +158,16 @@ func Hello6(name *C.char, callbackType *C.char) *C.char {
 	}
 
 	go func() {
-		i := 1
-		for {
+		for i := 1; i <= 5; i++ {
 			time.Sleep(1000 * time.Millisecond)
 
 			callbackData := map[string]interface{}{
 				"test":   testMsg,
-				"result": fmt.Sprintf("Infinite callback %d", i),
+				"result": fmt.Sprintf("Limited callback %d", i),
 			}
 			jsonData, _ := json.Marshal(callbackData)
 
 			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("infinite_callback"), C.CString(string(jsonData)))
-			i++
 		}
 	}()
 
@@ -197,13 +185,8 @@ func ReturnString(name *C.char, value *C.char) *C.char {
 	nameStr := C.GoString(name)
 	valueStr := C.GoString(value)
 
-	result := map[string]interface{}{
-		"_type": "string",
-		"value": "Hello " + nameStr + ", your value is " + valueStr,
-	}
-	resultJson, _ := json.Marshal(result)
-
-	return C.CString(string(resultJson))
+	result := "Hello " + nameStr + ", your value is " + valueStr
+	return C.CString(result)
 }
 
 //export ReturnInt
@@ -310,7 +293,17 @@ func ReturnNestedObject(name *C.char, value *C.char) *C.char {
 //export ReturnWithCallback
 func ReturnWithCallback(name *C.char, callbackType *C.char) *C.char {
 	if gCallNodeCallback != 0 {
-		C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("test_callback"), C.CString(`{"message":"Callback from Go"}`))
+		callbackData := map[string]interface{}{
+			"message": "Callback from Go",
+			"status":  "success",
+			"data": map[string]interface{}{
+				"id":        123,
+				"name":      C.GoString(name),
+				"timestamp": time.Now().Unix(),
+			},
+		}
+		jsonData, _ := json.Marshal(callbackData)
+		C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("test_callback"), C.CString(string(jsonData)))
 	}
 
 	result := map[string]interface{}{
@@ -319,6 +312,163 @@ func ReturnWithCallback(name *C.char, callbackType *C.char) *C.char {
 	}
 	resultJson, _ := json.Marshal(result)
 
+	return C.CString(string(resultJson))
+}
+
+//export ReturnWithObjectCallback
+func ReturnWithObjectCallback(name *C.char, callbackType *C.char) *C.char {
+	if gCallNodeCallback != 0 {
+		callbackData := map[string]interface{}{
+			"message": "Object callback from Go",
+			"status":  "success",
+			"user": map[string]interface{}{
+				"id":       456,
+				"username": C.GoString(name),
+				"email":    "test@example.com",
+				"roles":    []string{"admin", "user"},
+			},
+			"timestamp": time.Now().Unix(),
+		}
+		jsonData, _ := json.Marshal(callbackData)
+		C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("object_callback"), C.CString(string(jsonData)))
+	}
+
+	result := map[string]interface{}{
+		"_type": "string",
+		"value": "Object callback triggered",
+	}
+	resultJson, _ := json.Marshal(result)
+
+	return C.CString(string(resultJson))
+}
+
+//export ProcessArray
+func ProcessArray(jsonArray *C.char) *C.char {
+	arrayStr := C.GoString(jsonArray)
+
+	var arrayData []interface{}
+	if err := json.Unmarshal([]byte(arrayStr), &arrayData); err != nil {
+		result := map[string]interface{}{
+			"_type": "error",
+			"value": "Failed to parse array: " + err.Error(),
+		}
+		resultJson, _ := json.Marshal(result)
+		return C.CString(string(resultJson))
+	}
+
+	// Process array - sum numbers, count strings, etc.
+	var sum float64
+	var count int
+	var strings []string
+
+	for _, item := range arrayData {
+		switch v := item.(type) {
+		case float64:
+			sum += v
+			count++
+		case string:
+			strings = append(strings, v)
+			count++
+		case int:
+			sum += float64(v)
+			count++
+		}
+	}
+
+	result := map[string]interface{}{
+		"_type": "object",
+		"value": map[string]interface{}{
+			"originalArray": arrayData,
+			"itemCount":     count,
+			"sum":           sum,
+			"strings":       strings,
+			"processed":     true,
+		},
+	}
+
+	resultJson, _ := json.Marshal(result)
+	return C.CString(string(resultJson))
+}
+
+//export FilterArray
+func FilterArray(jsonArray *C.char) *C.char {
+	arrayStr := C.GoString(jsonArray)
+
+	var arrayData []map[string]interface{}
+	if err := json.Unmarshal([]byte(arrayStr), &arrayData); err != nil {
+		result := map[string]interface{}{
+			"_type": "error",
+			"value": "Failed to parse array: " + err.Error(),
+		}
+		resultJson, _ := json.Marshal(result)
+		return C.CString(string(resultJson))
+	}
+
+	// Filter array - return only items with specific conditions
+	var filtered []map[string]interface{}
+	for _, item := range arrayData {
+		if name, ok := item["name"].(string); ok && len(name) > 0 {
+			if age, ok := item["age"].(float64); ok && age >= 18 {
+				filtered = append(filtered, item)
+			}
+		}
+	}
+
+	result := map[string]interface{}{
+		"_type": "array",
+		"value": filtered,
+	}
+
+	resultJson, _ := json.Marshal(result)
+	return C.CString(string(resultJson))
+}
+
+//export ProcessObject
+func ProcessObject(jsonObject *C.char) *C.char {
+	objectStr := C.GoString(jsonObject)
+
+	var objectData map[string]interface{}
+	if err := json.Unmarshal([]byte(objectStr), &objectData); err != nil {
+		result := map[string]interface{}{
+			"_type": "error",
+			"value": "Failed to parse object: " + err.Error(),
+		}
+		resultJson, _ := json.Marshal(result)
+		return C.CString(string(resultJson))
+	}
+
+	// Process object - extract and transform data
+	processed := map[string]interface{}{
+		"processed": true,
+		"timestamp": time.Now().Unix(),
+	}
+
+	// Copy all original fields
+	for key, value := range objectData {
+		processed[key] = value
+	}
+
+	// Add some computed fields
+	if name, ok := objectData["name"].(string); ok {
+		processed["nameLength"] = len(name)
+		processed["nameUpperCase"] = strings.ToUpper(name)
+	}
+
+	if age, ok := objectData["age"].(float64); ok {
+		processed["isAdult"] = age >= 18
+		processed["ageInDays"] = int(age * 365)
+	}
+
+	if items, ok := objectData["items"].([]interface{}); ok {
+		processed["itemCount"] = len(items)
+	}
+
+	result := map[string]interface{}{
+		"_type": "object",
+		"value": processed,
+	}
+
+	resultJson, _ := json.Marshal(result)
 	return C.CString(string(resultJson))
 }
 

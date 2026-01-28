@@ -135,10 +135,15 @@ func run(cfg *Config) error {
 		return fmt.Errorf("cleanup build directory failed: %w", err)
 	}
 
-	fmt.Println("Step 1/4: Compiling Go code to shared library...")
+	fmt.Println("Step 1/4: Generating callback header and compiling Go code...")
 	if err := createBuildDirectory(workDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to create build directory: %v\n", err)
 		return fmt.Errorf("create build directory failed: %w", err)
+	}
+	// Generate callback.h in source directory for Go compilation
+	if err := generateCallbackHeader(workDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to generate callback header: %v\n", err)
+		return fmt.Errorf("generate callback header failed: %w", err)
 	}
 	if err := buildGoSharedLibrary(cfg, workDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -160,18 +165,29 @@ func run(cfg *Config) error {
 
 	fmt.Println("Step 3/4: Generating binding files...")
 	dllPath := filepath.Join(workDir, "build", cfg.ModuleName+".dll")
-	if err := generateResourceRC(tmpDir, cfg.ModuleName, dllPath); err != nil {
+
+	// Copy DLL to temp directory for resource embedding
+	tmpDLLPath := filepath.Join(tmpDir, cfg.ModuleName+".dll")
+	if err := copyFile(dllPath, tmpDLLPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to copy DLL to temp directory: %v\n", err)
+		return err
+	}
+
+	if err := generateResourceRC(tmpDir, cfg.ModuleName, tmpDLLPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
+
+	if err := generateWrapperCC(tmpDir, cfg.ModuleName, functions, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return err
+	}
+
 	if err := generateBindingGyp(tmpDir, cfg.ModuleName); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}
-	if err := generateWrapperCC(tmpDir, cfg.ModuleName, functions); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return err
-	}
+
 	fmt.Println()
 
 	fmt.Println("Step 4/4: Compiling with node-gyp...")
@@ -193,6 +209,19 @@ func run(cfg *Config) error {
 	fmt.Println("========================")
 
 	return nil
+}
+
+func generateHexArray(data []byte) string {
+	var hex strings.Builder
+	hex.WriteString("unsigned char dllData[] = {")
+	for i, b := range data {
+		if i > 0 {
+			hex.WriteString(",")
+		}
+		hex.WriteString(fmt.Sprintf("0x%02X", b))
+	}
+	hex.WriteString("};")
+	return hex.String()
 }
 
 func init() {

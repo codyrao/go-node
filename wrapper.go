@@ -6,7 +6,46 @@ import (
 	"strings"
 )
 
-func generateWrapperCC(workDir, moduleName string, functions []string) error {
+func generateCallbackHeader(workDir string) error {
+	headerPath := filepath.Join(workDir, "callback.h")
+
+	content := `/* Auto-generated callback header for go-node */
+#ifndef GO_NODE_CALLBACK_H
+#define GO_NODE_CALLBACK_H
+
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+typedef void (*CallbackFunc)(const char*, const char*);
+
+static void callCallback(void* ptr, const char* callbackType, const char* data) {
+    if (ptr != NULL) {
+        ((CallbackFunc)ptr)(callbackType, data);
+    }
+}
+
+#endif /* GO_NODE_CALLBACK_H */
+`
+
+	file, err := os.Create(headerPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(content); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func generateWrapperCC(workDir, moduleName string, functions []string, hexArray string) error {
 	wrapperPath := filepath.Join(workDir, "wrapper.cc")
 
 	funcDecls := ""
@@ -17,11 +56,12 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 		funcName := fn
 		jsName := toCamelCase(fn)
 
-		if strings.Contains(fn, "Callback") || strings.Contains(fn, "Register") || strings.Contains(fn, "Free") {
+		if strings.Contains(fn, "Register") || strings.Contains(fn, "Free") {
 			continue
 		}
 
-		if strings.HasSuffix(fn, "1") || strings.HasSuffix(fn, "2") || strings.HasSuffix(fn, "3") {
+		if fn == "ReturnString" {
+			// ReturnString - return raw string without JSON parsing
 			funcDecls += "typedef const char* (*" + funcName + "Fn)(const char*, const char*);\n" +
 				funcName + "Fn " + funcName + "Ptr = NULL;\n\n"
 
@@ -46,9 +86,23 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 				"    const char* arg1 = \"\";\n" +
 				"    const char* arg2 = \"\";\n" +
 				"    \n" +
-				"    if (args.Length() > 0 && args[0]->IsString()) {\n" +
-				"        String::Utf8Value arg1Str(isolate, args[0]);\n" +
-				"        arg1 = strdup(*arg1Str);\n" +
+				"    if (args.Length() > 0) {\n" +
+				"        if (args[0]->IsArray()) {\n" +
+				"            Local<Array> arr = Local<Array>::Cast(args[0]);\n" +
+				"            Local<Context> context = isolate->GetCurrentContext();\n" +
+				"            Local<String> jsonStr = v8::JSON::Stringify(context, arr).ToLocalChecked();\n" +
+				"            String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
+				"            arg1 = strdup(*jsonUtf8);\n" +
+				"        } else if (args[0]->IsObject() && !args[0]->IsArray() && !args[0]->IsString()) {\n" +
+				"            Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
+				"            Local<Context> context = isolate->GetCurrentContext();\n" +
+				"            Local<String> jsonStr = v8::JSON::Stringify(context, obj).ToLocalChecked();\n" +
+				"            String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
+				"            arg1 = strdup(*jsonUtf8);\n" +
+				"        } else if (args[0]->IsString()) {\n" +
+				"            String::Utf8Value arg1Str(isolate, args[0]);\n" +
+				"            arg1 = strdup(*arg1Str);\n" +
+				"        }\n" +
 				"    }\n" +
 				"    \n" +
 				"    if (args.Length() > 1 && args[1]->IsString()) {\n" +
@@ -59,11 +113,12 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 				"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +
 				"    \n" +
 				"    if (result != NULL) {\n" +
-				"        Local<Value> parsedResult = ParseJSONResult(isolate, result);\n" +
-				"        args.GetReturnValue().Set(parsedResult);\n" +
+				"        args.GetReturnValue().Set(String::NewFromUtf8(isolate, result).ToLocalChecked());\n" +
 				"    }\n" +
 				"}\n\n"
+
 		} else {
+			// All other functions - support array parameters
 			funcDecls += "typedef const char* (*" + funcName + "Fn)(const char*, const char*);\n" +
 				funcName + "Fn " + funcName + "Ptr = NULL;\n\n"
 
@@ -86,19 +141,36 @@ func generateWrapperCC(workDir, moduleName string, functions []string) error {
 				"    }\n" +
 				"    \n" +
 				"    const char* arg1 = \"\";\n" +
-				"    const char* callbackType = \"default\";\n" +
+				"    const char* arg2 = \"\";\n" +
 				"    \n" +
-				"    if (args.Length() > 0 && args[0]->IsString()) {\n" +
-				"        String::Utf8Value arg1Str(isolate, args[0]);\n" +
-				"        arg1 = strdup(*arg1Str);\n" +
+				"    if (args.Length() > 0) {\n" +
+				"        if (args[0]->IsArray()) {\n" +
+				"            Local<Array> arr = Local<Array>::Cast(args[0]);\n" +
+				"            Local<Context> context = isolate->GetCurrentContext();\n" +
+				"            Local<String> jsonStr = v8::JSON::Stringify(context, arr).ToLocalChecked();\n" +
+				"            String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
+				"            arg1 = strdup(*jsonUtf8);\n" +
+				"        } else if (args[0]->IsObject() && !args[0]->IsArray() && !args[0]->IsString()) {\n" +
+				"            Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
+				"            Local<Context> context = isolate->GetCurrentContext();\n" +
+				"            Local<String> jsonStr = v8::JSON::Stringify(context, obj).ToLocalChecked();\n" +
+				"            String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
+				"            arg1 = strdup(*jsonUtf8);\n" +
+				"        } else if (args[0]->IsString()) {\n" +
+				"            String::Utf8Value arg1Str(isolate, args[0]);\n" +
+				"            arg1 = strdup(*arg1Str);\n" +
+				"        }\n" +
 				"    }\n" +
 				"    \n" +
-				"    if (args.Length() > 1 && args[1]->IsFunction()) {\n" +
-				"        callbackType = \"callback\";\n" +
+				"    if (args.Length() > 1 && args[1]->IsString()) {\n" +
+				"        String::Utf8Value arg2Str(isolate, args[1]);\n" +
+				"        arg2 = strdup(*arg2Str);\n" +
+				"    } else if (args.Length() > 1 && args[1]->IsFunction()) {\n" +
 				"        RegisterCallback(isolate, args[1].As<Function>());\n" +
+				"        arg2 = \"callback\";\n" +
 				"    }\n" +
 				"    \n" +
-				"    const char* result = " + funcName + "Ptr(arg1, callbackType);\n" +
+				"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +
 				"    \n" +
 				"    if (result != NULL) {\n" +
 				"        Local<Value> parsedResult = ParseJSONResult(isolate, result);\n" +
@@ -135,42 +207,49 @@ std::string ExtractEmbeddedDLL() {
     
     std::string dllPath = std::string(tempPath) + "` + moduleName + `.dll";
     
-    // Get handle to current module
+    // First, try to find DLL in the same directory as the .node file
+    char modulePath[MAX_PATH];
     HMODULE hModule = NULL;
-    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                             (LPCSTR)&ExtractEmbeddedDLL, &hModule)) {
-        return "";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCSTR)&ExtractEmbeddedDLL, &hModule)) {
+        GetModuleFileNameA(hModule, modulePath, MAX_PATH);
+        
+        // Get directory path
+        char* lastSlash = strrchr(modulePath, '\\');
+        if (lastSlash != NULL) {
+            *lastSlash = '\0';
+            std::string localDllPath = std::string(modulePath) + "\\" + "` + moduleName + `.dll";
+            
+            // Check if DLL exists in local directory
+            std::ifstream testFile(localDllPath, std::ios::binary);
+            if (testFile.good()) {
+                testFile.close();
+                return localDllPath;
+            }
+        }
     }
     
-    // Find the resource
-    HRSRC hRes = FindResourceA(hModule, "` + moduleName + `_DLL", RT_RCDATA);
-    if (hRes == NULL) {
-        return "";
+    // Try to extract from resources
+    if (hModule != NULL) {
+        HRSRC hRes = FindResourceA(hModule, "` + moduleName + `_DLL", RT_RCDATA);
+        if (hRes != NULL) {
+            HGLOBAL hLoaded = LoadResource(hModule, hRes);
+            if (hLoaded != NULL) {
+                void* pData = LockResource(hLoaded);
+                DWORD size = SizeofResource(hModule, hRes);
+                if (pData != NULL && size > 0) {
+                    std::ofstream outFile(dllPath, std::ios::binary);
+                    if (outFile.is_open()) {
+                        outFile.write(reinterpret_cast<const char*>(pData), size);
+                        outFile.close();
+                        return dllPath;
+                    }
+                }
+            }
+        }
     }
     
-    // Load the resource
-    HGLOBAL hLoaded = LoadResource(hModule, hRes);
-    if (hLoaded == NULL) {
-        return "";
-    }
-    
-    // Lock the resource to get a pointer to the data
-    void* pData = LockResource(hLoaded);
-    DWORD size = SizeofResource(hModule, hRes);
-    if (pData == NULL || size == 0) {
-        return "";
-    }
-    
-    // Write DLL to temp file
-    std::ofstream outFile(dllPath, std::ios::binary);
-    if (!outFile.is_open()) {
-        return "";
-    }
-    
-    outFile.write(reinterpret_cast<const char*>(pData), size);
-    outFile.close();
-    
-    return dllPath;
+    return "";
 }
 
 // Clean up temporary DLL
@@ -283,12 +362,22 @@ void AsyncCallback(uv_async_t* handle) {
             auto it = callbackMap.begin();
             Local<Function> callback = Local<Function>::New(isolate, it->second);
             
-            Local<Value> argv[] = {
-                String::NewFromUtf8(isolate, data.callbackType.c_str()).ToLocalChecked(),
-                String::NewFromUtf8(isolate, data.jsonData.c_str()).ToLocalChecked()
-            };
+            Local<String> jsonStr = String::NewFromUtf8(isolate, data.jsonData.c_str()).ToLocalChecked();
+            Local<Value> parsedData;
             
-            callback->Call(context, Null(isolate), 2, argv).ToLocalChecked();
+            if (v8::JSON::Parse(context, jsonStr).ToLocal(&parsedData)) {
+                Local<Value> argv[] = {
+                    String::NewFromUtf8(isolate, data.callbackType.c_str()).ToLocalChecked(),
+                    parsedData
+                };
+                callback->Call(context, Null(isolate), 2, argv).ToLocalChecked();
+            } else {
+                Local<Value> argv[] = {
+                    String::NewFromUtf8(isolate, data.callbackType.c_str()).ToLocalChecked(),
+                    jsonStr
+                };
+                callback->Call(context, Null(isolate), 2, argv).ToLocalChecked();
+            }
         }
     }
 }

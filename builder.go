@@ -40,6 +40,7 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 		"GOARCH=amd64",
 		"GO111MODULE=on",
 		"GOPROXY=direct",
+		"CGO_CFLAGS=-I.",
 	)
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
@@ -73,8 +74,18 @@ func createBuildDirectory(workDir string) error {
 func cleanupBuild(workDir string) error {
 	buildDir := filepath.Join(workDir, "build")
 	if _, err := os.Stat(buildDir); err == nil {
-		return os.RemoveAll(buildDir)
+		if err := os.RemoveAll(buildDir); err != nil {
+			return err
+		}
 	}
+
+	callbackHeader := filepath.Join(workDir, "callback.h")
+	if _, err := os.Stat(callbackHeader); err == nil {
+		if err := os.Remove(callbackHeader); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
