@@ -25,8 +25,8 @@ console.log('测试4: Hello4 - 同步调用-同步回调')
 const params4 = {
     test: "Hello4 Test"
 }
-const result4 = demoaddon.Hello4(JSON.stringify(params4), function(callbackType, jsonData) {
-    console.log('   回调 [Hello4]:', callbackType, '->', jsonData)
+const result4 = demoaddon.Hello4(JSON.stringify(params4), function(jsonData) {
+    console.log('   回调 [Hello4]:', jsonData)
     if (typeof jsonData === 'object') {
         console.log('   回调数据类型: object')
         console.log('   回调数据:', JSON.stringify(jsonData))
@@ -42,8 +42,8 @@ console.log('测试5: Hello5 - 同步调用-异步回调')
 const params5 = {
     test: "Hello5 Test"
 }
-const result5 = demoaddon.Hello5(JSON.stringify(params5), function(callbackType, jsonData) {
-    console.log('   回调 [Hello5]:', callbackType, '->', jsonData)
+const result5 = demoaddon.Hello5(JSON.stringify(params5), function(jsonData) {
+    console.log('   回调 [Hello5]:', jsonData)
     if (typeof jsonData === 'object') {
         console.log('   回调数据类型: object')
         console.log('   回调数据:', JSON.stringify(jsonData))
@@ -59,8 +59,8 @@ console.log('测试6: Hello6 - 同步调用-异步无限次回调 (已禁用)')
 const params6 = {
     test: "Hello6 Test"
 }
-const result6 = demoaddon.Hello6(JSON.stringify(params6), function(callbackType, jsonData) {
-    console.log('   回调 [Hello6]:', callbackType, '->', jsonData)
+const result6 = demoaddon.Hello6(JSON.stringify(params6), function(jsonData) {
+    console.log('   回调 [Hello6]:', jsonData)
     if (typeof jsonData === 'object') {
         console.log('   回调数据类型: object')
         console.log('   回调数据:', JSON.stringify(jsonData))

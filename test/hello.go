@@ -97,7 +97,7 @@ func Hello4(name *C.char, callbackType *C.char) *C.char {
 			}
 			jsonData, _ := json.Marshal(callbackData)
 
-			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("sync_callback"), C.CString(string(jsonData)))
+			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
 		}
 	}
 
@@ -132,7 +132,7 @@ func Hello5(name *C.char, callbackType *C.char) *C.char {
 			}
 			jsonData, _ := json.Marshal(callbackData)
 
-			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("async_callback"), C.CString(string(jsonData)))
+			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
 		}
 	}()
 
@@ -167,7 +167,7 @@ func Hello6(name *C.char, callbackType *C.char) *C.char {
 			}
 			jsonData, _ := json.Marshal(callbackData)
 
-			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("infinite_callback"), C.CString(string(jsonData)))
+			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
 		}
 	}()
 
@@ -303,7 +303,7 @@ func ReturnWithCallback(name *C.char, callbackType *C.char) *C.char {
 			},
 		}
 		jsonData, _ := json.Marshal(callbackData)
-		C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("test_callback"), C.CString(string(jsonData)))
+		C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
 	}
 
 	result := map[string]interface{}{
@@ -330,7 +330,7 @@ func ReturnWithObjectCallback(name *C.char, callbackType *C.char) *C.char {
 			"timestamp": time.Now().Unix(),
 		}
 		jsonData, _ := json.Marshal(callbackData)
-		C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("object_callback"), C.CString(string(jsonData)))
+		C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
 	}
 
 	result := map[string]interface{}{

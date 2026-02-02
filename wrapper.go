@@ -21,11 +21,11 @@ func generateCallbackHeader(workDir string) error {
 #include <windows.h>
 #endif
 
-typedef void (*CallbackFunc)(const char*, const char*);
+typedef void (*CallbackFunc)(const char*);
 
-static void callCallback(void* ptr, const char* callbackType, const char* data) {
+static void callCallback(void* ptr, const char* data) {
     if (ptr != NULL) {
-        ((CallbackFunc)ptr)(callbackType, data);
+        ((CallbackFunc)ptr)(data);
     }
 }
 
@@ -260,7 +260,7 @@ void CleanupEmbeddedDLL(const std::string& dllPath) {
 }
 
 // Callback function type and global variable
-typedef void (*CallNodeCallbackType)(const char*, const char*);
+typedef void (*CallNodeCallbackType)(const char*);
 CallNodeCallbackType gCallNodeCallback = NULL;
 
 // Parse JSON result and return appropriate type
@@ -336,7 +336,6 @@ Isolate* gIsolate = NULL;
 
 // Async callback handling
 struct CallbackData {
-    std::string callbackType;
     std::string jsonData;
 };
 
@@ -365,18 +364,13 @@ void AsyncCallback(uv_async_t* handle) {
             Local<String> jsonStr = String::NewFromUtf8(isolate, data.jsonData.c_str()).ToLocalChecked();
             Local<Value> parsedData;
             
-            if (v8::JSON::Parse(context, jsonStr).ToLocal(&parsedData)) {
-                Local<Value> argv[] = {
-                    String::NewFromUtf8(isolate, data.callbackType.c_str()).ToLocalChecked(),
-                    parsedData
-                };
-                callback->Call(context, Null(isolate), 2, argv).ToLocalChecked();
+            if (v8::JSON::Parse(context, jsonStr).ToLocal(&parsedData) && parsedData->IsObject()) {
+                Local<Value> argv[] = { parsedData };
+                callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
             } else {
-                Local<Value> argv[] = {
-                    String::NewFromUtf8(isolate, data.callbackType.c_str()).ToLocalChecked(),
-                    jsonStr
-                };
-                callback->Call(context, Null(isolate), 2, argv).ToLocalChecked();
+                Local<Object> emptyObj = Object::New(isolate);
+                Local<Value> argv[] = { emptyObj };
+                callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
             }
         }
     }
@@ -395,9 +389,8 @@ int32_t RegisterCallback(Isolate* isolate, Local<Function> callback) {
     return id;
 }
 
-void CallNodeCallback(const char* callbackType, const char* jsonData) {
+void CallNodeCallback(const char* jsonData) {
     CallbackData data;
-    data.callbackType = callbackType;
     data.jsonData = jsonData;
     
     {
@@ -460,8 +453,8 @@ void UnloadGoLibrary(const FunctionCallbackInfo<Value>& args) {
 
 // Exported callback functions for Go
 extern "C" {
-    __declspec(dllexport) void CallCallback(const char* callbackType, const char* jsonData) {
-        CallNodeCallback(callbackType, jsonData);
+    __declspec(dllexport) void CallCallback(const char* jsonData) {
+        CallNodeCallback(jsonData);
     }
     
     __declspec(dllexport) void FreeCallback(int32_t callbackId) {
