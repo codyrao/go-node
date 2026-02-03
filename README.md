@@ -7,10 +7,10 @@ A command-line tool implemented in Go that compiles Go code into Node.js callabl
 - **Based on CGO and node-gyp**: Uses Go's c-shared compilation mode and node-gyp to build native modules
 - **Automatic bridge code generation**: Automatically generates C++ wrapper and binding.gyp files
 - **Callback support**: Supports calling Node.js callback functions from Go (synchronous and asynchronous)
-- **Multi-type return support**: Supports returning multiple Node.js types (object, int, float, bool, string)
-- **Object return support**: Supports returning JSON-formatted nested JavaScript objects
-- **Array parameter support**: Supports passing JavaScript arrays as JSON strings to Go functions
-- **Object parameter support**: Supports passing JavaScript objects as JSON strings to Go functions
+- **Electron version support**: Supports specifying Electron version via `-ev` parameter
+- **Fixed function signature**: All Go export functions use a consistent two-parameter structure
+- **Object return only**: Functions return either 0 or 1 object type value
+- **Object callback parameter**: Callback functions receive a single object parameter
 - **Automatic callback JSON parsing**: Automatically parses JSON strings to JavaScript objects in callbacks
 - **Flexible DLL loading**: Supports loading DLL from local directory or embedded resources
 - **Flexible configuration**: Supports custom output directory and module name
@@ -73,6 +73,7 @@ go-node -input=your_file.go -name=module_name
 | `-output` | No | `./output` | Output directory |
 | `-source` | No | `-input` directory | Go source file directory |
 | `-no-cleanup` | No | false | Do not clean up temporary files after compilation |
+| `-ev` | No | - | Electron version (e.g., 28.0.0). If not specified, uses node-gyp's default Node.js version |
 
 ### Examples
 
@@ -82,6 +83,9 @@ go-node -input=hello.go -name=hello
 
 # Specify output directory
 go-node -input=hello.go -name=hello -output=./dist
+
+# Compile for Electron
+go-node -input=hello.go -name=hello -ev=28.0.0
 
 # Do not clean up temporary files (for debugging)
 go-node -input=hello.go -name=hello -no-cleanup
@@ -109,6 +113,22 @@ This ensures reliable loading in various deployment scenarios.
 
 ## Go Code Writing Guidelines
 
+### Function Signature Requirements
+
+All Go export functions must follow this fixed signature:
+
+```go
+func FunctionName(params *C.char, callbackType *C.char) *C.char
+```
+
+**Parameter Structure:**
+- **First parameter (`params`)**: Object type parameter (JSON string)
+- **Second parameter (`callbackType`)**: Callback type indicator ("callback" or empty string)
+
+**Return Value:**
+- **Return type**: `*C.char` (JSON string or nil)
+- **Return format**: JSON object or nil
+
 ### Export Functions
 
 Use `//export` to mark export functions:
@@ -119,409 +139,153 @@ package main
 import "C"
 
 //export Hello
-func Hello() {
-    println("Hello from Go!")
-}
-
-//export Add
-func Add(a, b int) int {
-    return a + b
+func Hello(params *C.char, callbackType *C.char) *C.char {
+    // params is a JSON string representing an object
+    // callbackType is "callback" if a callback is provided
+    // Return a JSON string or nil
 }
 
 func main() {}
 ```
 
-### Supported Function Signatures
-
-The tool supports multiple function signature patterns:
-
-#### 1. Simple Synchronous Functions
+### Basic Function Example
 
 ```go
 //export Hello1
-func Hello1(name *C.char, value *C.char) *C.char {
-    // name and value are string parameters
-    // Return JSON string
-    result := map[string]interface{}{
-        "name":   C.GoString(name),
-        "value":  C.GoString(value),
-        "result": "success",
-    }
-    jsonBytes, _ := json.Marshal(result)
-    return C.CString(string(jsonBytes))
-}
-```
+func Hello1(params *C.char, callbackType *C.char) *C.char {
+    var inputData map[string]interface{}
+    json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
-#### 2. Synchronous Callback Functions
-
-```go
-//export Hello4
-func Hello4(name *C.char, callbackType *C.char) *C.char {
-    if C.GoString(callbackType) == "callback" {
-        // Trigger synchronous callbacks
-        CallCallback(C.CString("sync_callback"), C.CString(`{"result":"Callback 1"}`))
-        CallCallback(C.CString("sync_callback"), C.CString(`{"result":"Callback 2"}`))
-        CallCallback(C.CString("sync_callback"), C.CString(`{"result":"Callback 3"}`))
-    }
-    return C.CString(`{"result":42,"status":"success"}`)
-}
-```
-
-#### 3. Asynchronous Callback Functions
-
-```go
-//export Hello5
-func Hello5(name *C.char, callbackType *C.char) *C.char {
-    if C.GoString(callbackType) == "callback" {
-        go func() {
-            for i := 1; i <= 5; i++ {
-                time.Sleep(500 * time.Millisecond)
-                CallCallback(C.CString("async_callback"), C.CString(fmt.Sprintf(`{"result":"Async callback %d"}`, i)))
-            }
-        }()
-    }
-    return C.CString(`{"result":"Async started","status":"success"}`)
-}
-```
-
-#### 4. Infinite Asynchronous Callback Functions
-
-```go
-//export Hello6
-func Hello6(name *C.char, callbackType *C.char) *C.char {
-    if C.GoString(callbackType) == "callback" {
-        go func() {
-            for i := 1; ; i++ {
-                time.Sleep(1 * time.Second)
-                CallCallback(C.CString("infinite_callback"), C.CString(fmt.Sprintf(`{"result":"Infinite callback %d"}`, i)))
-            }
-        }()
-    }
-    return C.CString(`{"result":"Infinite async started","status":"success"}`)
-}
-```
-
-### Callback Support
-
-The tool has built-in callback mechanism, Go code can call the exported `CallCallback` function:
-
-```go
-//export ProcessWithCallback
-func ProcessWithCallback() {
-    // Call callback from Go code
-    response := `{"status": "success"}`
-    CallCallback(C.CString("callback_type"), C.CString(response))
-}
-```
-
-### Multi-Type Return Support
-
-Go functions can return multiple Node.js types, including: object, int, float, bool, string.
-
-#### Return Type Format
-
-Return values need to use JSON format, containing `_type` and `value` fields:
-
-```go
-result := map[string]interface{}{
-    "_type": "type_name",  // object, int, float, bool, string
-    "value": actual_value,
-}
-jsonBytes, _ := json.Marshal(result)
-return C.CString(string(jsonBytes))
-```
-
-#### Supported Return Types
-
-**1. String Type (string)**
-```go
-//export ReturnString
-func ReturnString(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    result := map[string]interface{}{
-        "_type":  "string",
-        "value":  "Hello " + nameStr + ", your value is " + valueStr,
-    }
-    jsonBytes, _ := json.Marshal(result)
-    return C.CString(string(jsonBytes))
-}
-```
-
-**2. Integer Type (int)**
-```go
-//export ReturnInt
-func ReturnInt(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    var valueInt int
-    fmt.Sscanf(valueStr, "%d", &valueInt)
-
-    result := map[string]interface{}{
-        "_type":  "int",
-        "value":  valueInt * 2,
-    }
-    jsonBytes, _ := json.Marshal(result)
-    return C.CString(string(jsonBytes))
-}
-```
-
-**3. Float Type (float)**
-```go
-//export ReturnFloat
-func ReturnFloat(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    var valueFloat float64
-    fmt.Sscanf(valueStr, "%f", &valueFloat)
-
-    result := map[string]interface{}{
-        "_type":  "float",
-        "value":  valueFloat * 1.5,
-    }
-    jsonBytes, _ := json.Marshal(result)
-    return C.CString(string(jsonBytes))
-}
-```
-
-**4. Boolean Type (bool)**
-```go
-//export ReturnBool
-func ReturnBool(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    var valueFloat float64
-    fmt.Sscanf(valueStr, "%f", &valueFloat)
-
-    result := map[string]interface{}{
-        "_type":  "bool",
-        "value":  valueFloat > 0.0,
-    }
-    jsonBytes, _ := json.Marshal(result)
-    return C.CString(string(jsonBytes))
-}
-```
-
-**5. Object Type (object)**
-```go
-//export ReturnObject
-func ReturnObject(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    var valueInt int
-    fmt.Sscanf(valueStr, "%d", &valueInt)
-
-    result := map[string]interface{}{
-        "_type": "object",
-        "value": map[string]interface{}{
-            "name":     nameStr,
-            "age":      valueInt,
-            "isActive": true,
-            "scores":   []int{85, 90, 78},
-            "address": map[string]string{
-                "city":    "Beijing",
-                "country": "China",
-            },
-        },
-    }
-    jsonBytes, _ := json.Marshal(result)
-    return C.CString(string(jsonBytes))
-}
-```
-
-**6. Nested Object Type**
-```go
-//export ReturnNestedObject
-func ReturnNestedObject(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    result := map[string]interface{}{
-        "_type": "object",
-        "value": map[string]interface{}{
-            "user": map[string]interface{}{
-                "name": nameStr,
-                "age":  30,
-            },
-            "metadata": map[string]interface{}{
-                "created": "2024-01-01",
-                "tags":    []string{"tag1", "tag2"},
-            },
-            "items": []map[string]interface{}{
-                {"id": 1, "name": "Item 1"},
-                {"id": 2, "name": "Item 2"},
-                {"id": 3, "name": "Item 3"},
-            },
-        },
-    }
-    jsonBytes, _ := json.Marshal(result)
-    return C.CString(string(jsonBytes))
-}
-```
-
-#### Node.js Usage
-
-```javascript
-const types = require('./output/types.node')
-
-// String type
-const strResult = types.ReturnString("Test", "World")
-console.log(strResult)  // "Hello Test, your value is World"
-console.log(typeof strResult)  // "string"
-
-// Integer type
-const intResult = types.ReturnInt("Test", "10")
-console.log(intResult)  // 20
-console.log(typeof intResult)  // "number"
-
-// Float type
-const floatResult = types.ReturnFloat("Test", "3.14")
-console.log(floatResult)  // 4.71
-console.log(typeof floatResult)  // "number"
-
-// Boolean type
-const boolResult = types.ReturnBool("Test", "5.5")
-console.log(boolResult)  // true
-console.log(typeof boolResult)  // "boolean"
-
-// Object type
-const objResult = types.ReturnObject("Test", "30")
-console.log(objResult.name)  // "Test"
-console.log(objResult.age)  // 30
-console.log(objResult.isActive)  // true
-console.log(objResult.scores)  // [85, 90, 78]
-console.log(objResult.address.city)  // "Beijing"
-
-// Nested object type
-const nestedResult = types.ReturnNestedObject("Test", "100")
-console.log(nestedResult.user.name)  // "Test"
-console.log(nestedResult.user.age)  // 30
-console.log(nestedResult.metadata.created)  // "2024-01-01"
-console.log(nestedResult.items[0].name)  // "Item 1"
-```
-
-#### Type Conversion Rules
-
-| Go Return Type | Node.js Type | Description |
-|----------------|----------------|-------------|
-| `_type: "string"` | string | JavaScript string |
-| `_type: "int"` | number | JavaScript number (integer) |
-| `_type: "float"` | number | JavaScript number (float) |
-| `_type: "bool"` | boolean | JavaScript boolean |
-| `_type: "object"` | object | JavaScript object (supports nesting) |
-
-Note: If the returned JSON does not contain the `_type` field, the JSON-parsed raw object will be returned directly.
-
-### Parameter Type Support
-
-Go functions support multiple parameter types, including: string, array, and object.
-
-#### Supported Parameter Types
-
-**1. String Type (string)**
-```go
-//export Hello1
-func Hello1(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    result := map[string]interface{}{
-        "name":   nameStr,
-        "value":  valueStr,
-        "result": "success",
-    }
-    jsonBytes, _ := json.Marshal(result)
-    return C.CString(string(jsonBytes))
-}
-```
-
-**2. Array Type (array)**
-```go
-//export ProcessArray
-func ProcessArray(jsonArray *C.char) *C.char {
-    arrayStr := C.GoString(jsonArray)
-
-    var arrayData []interface{}
-    if err := json.Unmarshal([]byte(arrayStr), &arrayData); err != nil {
-        result := map[string]interface{}{
-            "_type": "error",
-            "value": "Failed to parse array: " + err.Error(),
-        }
-        resultJson, _ := json.Marshal(result)
-        return C.CString(string(resultJson))
+    name := ""
+    if n, ok := inputData["name"].(string); ok {
+        name = n
     }
 
-    // Process array - sum numbers, count strings, etc.
-    var sum float64
-    var count int
-    var strings []string
-
-    for _, item := range arrayData {
-        switch v := item.(type) {
-        case float64:
-            sum += v
-            count++
-        case string:
-            strings = append(strings, v)
-            count++
-        case int:
-            sum += float64(v)
-            count++
-        }
+    value := 0
+    if v, ok := inputData["value"].(float64); ok {
+        value = int(v)
     }
 
-    result := map[string]interface{}{
-        "_type": "object",
-        "value": map[string]interface{}{
-            "originalArray": arrayData,
-            "itemCount":     count,
-            "sum":           sum,
-            "strings":       strings,
-            "processed":     true,
-        },
-    }
+    result := value * 2
 
-    resultJson, _ := json.Marshal(result)
+    resultData := map[string]interface{}{
+        "name":   name,
+        "value":  value,
+        "result": result,
+    }
+    resultJson, _ := json.Marshal(resultData)
+
     return C.CString(string(resultJson))
 }
 ```
 
-**3. Object Type (object)**
-```go
-//export ProcessObject
-func ProcessObject(jsonObject *C.char) *C.char {
-    objectStr := C.GoString(jsonObject)
+### Callback Functions
 
-    var objectData map[string]interface{}
-    if err := json.Unmarshal([]byte(objectStr), &objectData); err != nil {
-        result := map[string]interface{}{
-            "_type": "error",
-            "value": "Failed to parse object: " + err.Error(),
-        }
-        resultJson, _ := json.Marshal(result)
-        return C.CString(string(resultJson))
+#### Synchronous Callback
+
+```go
+//export HelloWithCallback
+func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
+    var inputData map[string]interface{}
+    json.Unmarshal([]byte(C.GoString(params)), &inputData)
+
+    testMsg := "default"
+    if msg, ok := inputData["test"].(string); ok {
+        testMsg = msg
     }
 
-    // Process object - extract and transform data
+    if C.GoString(callbackType) == "callback" && gCallNodeCallback != 0 {
+        for i := 1; i <= 3; i++ {
+            time.Sleep(300 * time.Millisecond)
+
+            callbackData := map[string]interface{}{
+                "test":   testMsg,
+                "result": fmt.Sprintf("Callback %d", i),
+            }
+            jsonData, _ := json.Marshal(callbackData)
+
+            C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
+        }
+    }
+
+    resultData := map[string]interface{}{
+        "status": "success",
+        "result": 42,
+    }
+    resultJson, _ := json.Marshal(resultData)
+
+    return C.CString(string(resultJson))
+}
+```
+
+#### Asynchronous Callback
+
+```go
+//export AsyncHello
+func AsyncHello(params *C.char, callbackType *C.char) *C.char {
+    var inputData map[string]interface{}
+    json.Unmarshal([]byte(C.GoString(params)), &inputData)
+
+    testMsg := "default"
+    if msg, ok := inputData["test"].(string); ok {
+        testMsg = msg
+    }
+
+    if C.GoString(callbackType) == "callback" && gCallNodeCallback != 0 {
+        go func() {
+            for i := 1; i <= 5; i++ {
+                time.Sleep(500 * time.Millisecond)
+
+                callbackData := map[string]interface{}{
+                    "test":   testMsg,
+                    "result": fmt.Sprintf("Async callback %d", i),
+                }
+                jsonData, _ := json.Marshal(callbackData)
+
+                C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
+            }
+        }()
+    }
+
+    resultData := map[string]interface{}{
+        "status": "success",
+        "result": "Async started",
+    }
+    resultJson, _ := json.Marshal(resultData)
+
+    return C.CString(string(resultJson))
+}
+```
+
+### No Return Value
+
+```go
+//export NoReturn
+func NoReturn(params *C.char, callbackType *C.char) *C.char {
+    return nil
+}
+```
+
+### Object Processing Example
+
+```go
+//export ProcessObject
+func ProcessObject(params *C.char, callbackType *C.char) *C.char {
+    var objectData map[string]interface{}
+    json.Unmarshal([]byte(C.GoString(params)), &objectData)
+
     processed := map[string]interface{}{
         "processed": true,
         "timestamp": time.Now().Unix(),
     }
 
-    // Copy all original fields
     for key, value := range objectData {
         processed[key] = value
     }
 
-    // Add some computed fields
     if name, ok := objectData["name"].(string); ok {
         processed["nameLength"] = len(name)
-        processed["nameUpperCase"] = strings.ToUpper(name)
+        processed["nameUpperCase"] = name
     }
 
     if age, ok := objectData["age"].(float64); ok {
@@ -533,135 +297,81 @@ func ProcessObject(jsonObject *C.char) *C.char {
         processed["itemCount"] = len(items)
     }
 
-    result := map[string]interface{}{
-        "_type": "object",
-        "value": processed,
-    }
-
-    resultJson, _ := json.Marshal(result)
+    resultJson, _ := json.Marshal(processed)
     return C.CString(string(resultJson))
 }
 ```
-
-#### Node.js Usage
-
-```javascript
-const demoaddon = require('./output/hello.node')
-
-// String type
-const strResult = demoaddon.Hello1("Test", "10")
-console.log(strResult)
-
-// Array type
-const arrayResult = demoaddon.ProcessArray([1, 2, 3, 4, 5, "hello", "world"])
-console.log(arrayResult)
-console.log(arrayResult.itemCount)  // 7
-console.log(arrayResult.sum)  // 15
-
-// Object type
-const objectResult = demoaddon.ProcessObject({
-    name: "Alice",
-    age: 25,
-    email: "alice@example.com",
-    items: ["item1", "item2", "item3"],
-    active: true
-})
-console.log(objectResult)
-console.log(objectResult.nameLength)  // 5
-console.log(objectResult.isAdult)  // true
-console.log(objectResult.itemCount)  // 3
-```
-
-#### Parameter Type Conversion Rules
-
-| Node.js Parameter Type | Go Parameter Type | Description |
-|----------------------|-------------------|-------------|
-| string | *C.char | JavaScript string converted to C string |
-| array | *C.char | JavaScript array converted to JSON string |
-| object | *C.char | JavaScript object converted to JSON string |
-
-Note: All parameter types are converted to JSON strings and passed to Go functions. Go functions need to use `json.Unmarshal` to parse the data.
-
-### Callback JSON Parsing
-
-When Go calls back to Node.js, if the callback data is a JSON string, it will be automatically parsed into a JavaScript object.
-
-#### Go Code
-
-```go
-//export ReturnWithObjectCallback
-func ReturnWithObjectCallback(name *C.char, callbackType *C.char) *C.char {
-    if gCallNodeCallback != 0 {
-        callbackData := map[string]interface{}{
-            "message": "Object callback from Go",
-            "status":  "success",
-            "user": map[string]interface{}{
-                "id":       456,
-                "username": C.GoString(name),
-                "email":    "test@example.com",
-                "roles":    []string{"admin", "user"},
-            },
-            "timestamp": time.Now().Unix(),
-        }
-        jsonData, _ := json.Marshal(callbackData)
-        C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("object_callback"), C.CString(string(jsonData)))
-    }
-
-    result := map[string]interface{}{
-        "_type": "string",
-        "value": "Object callback triggered",
-    }
-    resultJson, _ := json.Marshal(result)
-
-    return C.CString(string(resultJson))
-}
-```
-
-#### Node.js Usage
-
-```javascript
-const demoaddon = require('./output/hello.node')
-
-demoaddon.ReturnWithObjectCallback("TestUser", "object_callback", function(callbackType, jsonData) {
-    console.log('Callback type:', callbackType)
-    console.log('Callback data:', jsonData)
-    console.log('Callback data type:', typeof jsonData)
-    console.log('User ID:', jsonData.user.id)
-    console.log('Username:', jsonData.user.username)
-    console.log('Roles:', jsonData.user.roles)
-})
-```
-
-Note: The callback data is automatically parsed from JSON string to JavaScript object. If parsing fails, the original string is returned.
 
 ## Node.js Usage
 
 ### Import Module
 
 ```javascript
-const demoaddon = require('./output/hello.node')
+const hello = require('./output/hello.node')
 ```
 
-### Call Synchronous Functions
+### Call Basic Functions
 
 ```javascript
-// Simple call
-const result = demoaddon.Hello1("Test1", "10")
-console.log(result)  // JSON string
+// Call function with object parameter
+const result1 = hello.hello1({ name: 'Alice', value: 21 })
+console.log(result1)
+// Output: { name: 'Alice', value: 21, result: 42 }
 ```
 
 ### Call Callback Functions
 
 ```javascript
 // Synchronous callback
-demoaddon.Hello4('{"test":"Hello4 Test"}', function(callbackType, jsonData) {
-    console.log(`Callback [${callbackType}]:`, jsonData)
+const result2 = hello.helloWithCallback({ test: 'Hello from Node' }, (data) => {
+    console.log('Callback received:', data)
+    // Output: { test: 'Hello from Node', result: 'Callback 1' }
+    // Output: { test: 'Hello from Node', result: 'Callback 2' }
+    // Output: { test: 'Hello from Node', result: 'Callback 3' }
 })
+console.log('Result:', result2)
+// Output: { status: 'success', result: 42 }
 
 // Asynchronous callback
-demoaddon.Hello5('{"test":"Hello5 Test"}', function(callbackType, jsonData) {
-    console.log(`Async callback [${callbackType}]:`, jsonData)
+const result3 = hello.asyncHello({ test: 'Async test' }, (data) => {
+    console.log('Async callback received:', data)
+    // Output: { test: 'Async test', result: 'Async callback 1' }
+    // Output: { test: 'Async test', result: 'Async callback 2' }
+    // ... (5 callbacks total)
 })
+console.log('Result:', result3)
+// Output: { status: 'success', result: 'Async started' }
+```
+
+### Call Object Processing Functions
+
+```javascript
+const result4 = hello.processObject({
+    name: 'Charlie',
+    age: 25,
+    items: ['item1', 'item2', 'item3']
+})
+console.log(result4)
+// Output: {
+//   name: 'Charlie',
+//   age: 25,
+//   items: ['item1', 'item2', 'item3'],
+//   nameLength: 7,
+//   nameUpperCase: 'Charlie',
+//   isAdult: true,
+//   ageInDays: 9125,
+//   itemCount: 3,
+//   processed: true,
+//   timestamp: 1234567890
+// }
+```
+
+### No Return Value
+
+```javascript
+const result5 = hello.noReturn({})
+console.log(result5)
+// Output: undefined
 ```
 
 ## Complete Example
@@ -673,24 +383,12 @@ package main
 
 /*
 #cgo CFLAGS: -I.
-#include <stdlib.h>
-#include <stdint.h>
-#include <windows.h>
-#include <string.h>
-
-typedef void (*CallbackFunc)(const char*, const char*);
-
-static void callCallback(void* ptr, const char* callbackType, const char* data) {
-    if (ptr != NULL) {
-        ((CallbackFunc)ptr)(callbackType, data);
-    }
-}
+#include "callback.h"
 */
 import "C"
 import (
     "encoding/json"
     "fmt"
-    "strconv"
     "time"
     "unsafe"
 )
@@ -703,37 +401,43 @@ func RegisterGoCallback(fn uintptr) {
 }
 
 //export Hello1
-func Hello1(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
+func Hello1(params *C.char, callbackType *C.char) *C.char {
+    var inputData map[string]interface{}
+    json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
-    valueInt, _ := strconv.Atoi(valueStr)
-    result := valueInt * 2
+    name := ""
+    if n, ok := inputData["name"].(string); ok {
+        name = n
+    }
+
+    value := 0
+    if v, ok := inputData["value"].(float64); ok {
+        value = int(v)
+    }
+
+    result := value * 2
 
     resultData := map[string]interface{}{
-        "name":   nameStr,
-        "value":  valueInt,
+        "name":   name,
+        "value":  value,
         "result": result,
     }
-    jsonBytes, _ := json.Marshal(resultData)
+    resultJson, _ := json.Marshal(resultData)
 
-    return C.CString(string(jsonBytes))
+    return C.CString(string(resultJson))
 }
 
-//export Hello4
-func Hello4(name *C.char, callbackType *C.char) *C.char {
-    nameStr := C.GoString(name)
-    cbType := C.GoString(callbackType)
-
+//export HelloWithCallback
+func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
     var inputData map[string]interface{}
-    json.Unmarshal([]byte(nameStr), &inputData)
+    json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
     testMsg := "default"
     if msg, ok := inputData["test"].(string); ok {
         testMsg = msg
     }
 
-    if gCallNodeCallback != 0 {
+    if C.GoString(callbackType) == "callback" && gCallNodeCallback != 0 {
         for i := 1; i <= 3; i++ {
             time.Sleep(300 * time.Millisecond)
 
@@ -743,7 +447,7 @@ func Hello4(name *C.char, callbackType *C.char) *C.char {
             }
             jsonData, _ := json.Marshal(callbackData)
 
-            C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("sync_callback"), C.CString(string(jsonData)))
+            C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
         }
     }
 
@@ -751,164 +455,41 @@ func Hello4(name *C.char, callbackType *C.char) *C.char {
         "status": "success",
         "result": 42,
     }
-    jsonBytes, _ := json.Marshal(resultData)
+    resultJson, _ := json.Marshal(resultData)
 
-    return C.CString(string(jsonBytes))
+    return C.CString(string(resultJson))
 }
 
-//export Hello5
-func Hello5(name *C.char, callbackType *C.char) *C.char {
-    nameStr := C.GoString(name)
-    cbType := C.GoString(callbackType)
+//export ProcessObject
+func ProcessObject(params *C.char, callbackType *C.char) *C.char {
+    var objectData map[string]interface{}
+    json.Unmarshal([]byte(C.GoString(params)), &objectData)
 
-    var inputData map[string]interface{}
-    json.Unmarshal([]byte(nameStr), &inputData)
-
-    testMsg := "default"
-    if msg, ok := inputData["test"].(string); ok {
-        testMsg = msg
+    processed := map[string]interface{}{
+        "processed": true,
+        "timestamp": time.Now().Unix(),
     }
 
-    go func() {
-        for i := 1; i <= 5; i++ {
-            time.Sleep(500 * time.Millisecond)
-
-            callbackData := map[string]interface{}{
-                "test":   testMsg,
-                "result": fmt.Sprintf("Async callback %d", i),
-            }
-            jsonData, _ := json.Marshal(callbackData)
-
-            C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString("async_callback"), C.CString(string(jsonData)))
-        }
-    }()
-
-    resultData := map[string]interface{}{
-        "status": "success",
-        "result": "Async started",
+    for key, value := range objectData {
+        processed[key] = value
     }
-    jsonBytes, _ := json.Marshal(resultData)
 
-    return C.CString(string(jsonBytes))
-}
-
-//export ReturnString
-func ReturnString(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    result := map[string]interface{}{
-        "_type":  "string",
-        "value":  "Hello " + nameStr + ", your value is " + valueStr,
+    if name, ok := objectData["name"].(string); ok {
+        processed["nameLength"] = len(name)
+        processed["nameUpperCase"] = name
     }
-    jsonBytes, _ := json.Marshal(result)
 
-    return C.CString(string(jsonBytes))
-}
-
-//export ReturnInt
-func ReturnInt(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    var valueInt int
-    fmt.Sscanf(valueStr, "%d", &valueInt)
-
-    result := map[string]interface{}{
-        "_type":  "int",
-        "value":  valueInt * 2,
+    if age, ok := objectData["age"].(float64); ok {
+        processed["isAdult"] = age >= 18
+        processed["ageInDays"] = int(age * 365)
     }
-    jsonBytes, _ := json.Marshal(result)
 
-    return C.CString(string(jsonBytes))
-}
-
-//export ReturnFloat
-func ReturnFloat(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    var valueFloat float64
-    fmt.Sscanf(valueStr, "%f", &valueFloat)
-
-    result := map[string]interface{}{
-        "_type":  "float",
-        "value":  valueFloat * 1.5,
+    if items, ok := objectData["items"].([]interface{}); ok {
+        processed["itemCount"] = len(items)
     }
-    jsonBytes, _ := json.Marshal(result)
 
-    return C.CString(string(jsonBytes))
-}
-
-//export ReturnBool
-func ReturnBool(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    var valueFloat float64
-    fmt.Sscanf(valueStr, "%f", &valueFloat)
-
-    result := map[string]interface{}{
-        "_type":  "bool",
-        "value":  valueFloat > 0.0,
-    }
-    jsonBytes, _ := json.Marshal(result)
-
-    return C.CString(string(jsonBytes))
-}
-
-//export ReturnObject
-func ReturnObject(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    var valueInt int
-    fmt.Sscanf(valueStr, "%d", &valueInt)
-
-    result := map[string]interface{}{
-        "_type": "object",
-        "value": map[string]interface{}{
-            "name":     nameStr,
-            "age":      valueInt,
-            "isActive": true,
-            "scores":   []int{85, 90, 78},
-            "address": map[string]string{
-                "city":    "Beijing",
-                "country": "China",
-            },
-        },
-    }
-    jsonBytes, _ := json.Marshal(result)
-
-    return C.CString(string(jsonBytes))
-}
-
-//export ReturnNestedObject
-func ReturnNestedObject(name *C.char, value *C.char) *C.char {
-    nameStr := C.GoString(name)
-    valueStr := C.GoString(value)
-
-    result := map[string]interface{}{
-        "_type": "object",
-        "value": map[string]interface{}{
-            "user": map[string]interface{}{
-                "name": nameStr,
-                "age":  30,
-            },
-            "metadata": map[string]interface{}{
-                "created": "2024-01-01",
-                "tags":    []string{"tag1", "tag2"},
-            },
-            "items": []map[string]interface{}{
-                {"id": 1, "name": "Item 1"},
-                {"id": 2, "name": "Item 2"},
-                {"id": 3, "name": "Item 3"},
-            },
-        },
-    }
-    jsonBytes, _ := json.Marshal(result)
-
-    return C.CString(string(jsonBytes))
+    resultJson, _ := json.Marshal(processed)
+    return C.CString(string(resultJson))
 }
 
 func main() {}
@@ -917,162 +498,235 @@ func main() {}
 ### Node.js Code (test.js)
 
 ```javascript
-const demoaddon = require('./output/hello.node')
+const hello = require('./output/hello.node')
 
-console.log('=== Go2Node Multi-function Test ===\n')
+console.log('=== Testing go-node ===\n')
 
-// Test 1: Synchronous call Hello1(name string, value int) int
-console.log('Test 1: Hello1 - Synchronous call (name string, value int) -> int')
-const result1 = demoaddon.Hello1("Test1", "10")
-console.log('   Result:', result1)
+console.log('1. Test Hello1 - basic object parameter:')
+const result1 = hello.hello1({ name: 'Alice', value: 21 })
+console.log('Result:', result1)
 console.log()
 
-// Test 2: Synchronous call Hello2(name string, value float) float
-console.log('Test 2: Hello2 - Synchronous call (name string, value float) -> float')
-const result2 = demoaddon.Hello2("Test2", "3.14")
-console.log('   Result:', result2)
-console.log()
-
-// Test 3: Synchronous call Hello3(name bool, value float) bool
-console.log('Test 3: Hello3 - Synchronous call (name bool, value float) -> bool')
-const result3 = demoaddon.Hello3("true", "5.5")
-console.log('   Result:', result3)
-console.log()
-
-// Test 4: Synchronous call - synchronous callback Hello4(name, callback(test string, res string)) int
-console.log('Test 4: Hello4 - Synchronous call - synchronous callback')
-const params4 = {
-    test: "Hello4 Test"
-}
-const result4 = demoaddon.Hello4(JSON.stringify(params4), function(callbackType, jsonData) {
-    console.log('   Callback [Hello4]:', callbackType, '->', jsonData)
+console.log('2. Test ProcessObject - object processing:')
+const result2 = hello.processObject({
+    name: 'Charlie',
+    age: 25,
+    items: ['item1', 'item2', 'item3']
 })
-console.log('   Result:', result4)
+console.log('Result:', result2)
 console.log()
 
-// Test 5: Synchronous call - asynchronous callback Hello5(name, async_callback(test string, res string)) string
-console.log('Test 5: Hello5 - Synchronous call - asynchronous callback')
-const params5 = {
-    test: "Hello5 Test"
-}
-const result5 = demoaddon.Hello5(JSON.stringify(params5), function(callbackType, jsonData) {
-    console.log('   Async callback [Hello5]:', callbackType, '->', jsonData)
+console.log('3. Test HelloWithCallback - synchronous callback:')
+const result3 = hello.helloWithCallback({ test: 'Hello from Node' }, (data) => {
+    console.log('Callback received:', data)
 })
-console.log('   Result:', result5)
-console.log('   Waiting for async callbacks...\n')
-
-// Test 6: Return string type
-console.log('Test 6: ReturnString - Return string type')
-const result6 = demoaddon.ReturnString("Test6", "World")
-console.log('   Result:', result6)
-console.log('   Type:', typeof result6)
+console.log('Result:', result3)
 console.log()
 
-// Test 7: Return integer type
-console.log('Test 7: ReturnInt - Return integer type')
-const result7 = demoaddon.ReturnInt("Test7", "10")
-console.log('   Result:', result7)
-console.log('   Type:', typeof result7)
-console.log()
-
-// Test 8: Return float type
-console.log('Test 8: ReturnFloat - Return float type')
-const result8 = demoaddon.ReturnFloat("Test8", "3.14")
-console.log('   Result:', result8)
-console.log('   Type:', typeof result8)
-console.log()
-
-// Test 9: Return boolean type
-console.log('Test 9: ReturnBool - Return boolean type')
-const result9 = demoaddon.ReturnBool("Test9", "5.5")
-console.log('   Result:', result9)
-console.log('   Type:', typeof result9)
-console.log()
-
-// Test 10: Return object type
-console.log('Test 10: ReturnObject - Return object type')
-const result10 = demoaddon.ReturnObject("Test10", "30")
-console.log('   Result:', result10)
-console.log('   Type:', typeof result10)
-console.log('   name:', result10.name)
-console.log('   age:', result10.age)
-console.log('   isActive:', result10.isActive)
-console.log('   scores:', result10.scores)
-console.log('   address:', result10.address)
-console.log()
-
-// Test 11: Return nested object type
-console.log('Test 11: ReturnNestedObject - Return nested object type')
-const result11 = demoaddon.ReturnNestedObject("Test11", "100")
-console.log('   Result:', result11)
-console.log('   Type:', typeof result11)
-console.log('   user.name:', result11.user.name)
-console.log('   user.age:', result11.user.age)
-console.log('   metadata:', result11.metadata)
-console.log('   items:', result11.items)
-console.log()
-
-console.log('=== Basic tests completed ===')
-console.log('Waiting for async callbacks...')
+console.log('=== All tests completed ===')
 ```
 
-### Compile and Run
+## Function Signature Rules
+
+### Go Function Signature
+
+All exported Go functions must follow this signature:
+
+```go
+func FunctionName(params *C.char, callbackType *C.char) *C.char
+```
+
+**Parameters:**
+- `params`: JSON string representing an object
+- `callbackType`: "callback" if a callback is provided, otherwise empty
+
+**Return:**
+- `*C.char`: JSON string representing an object, or nil
+
+### Node.js Function Call
+
+```javascript
+const result = module.functionName(objectParam, callbackFunction)
+```
+
+**Parameters:**
+- `objectParam`: JavaScript object (required)
+- `callbackFunction`: JavaScript function (optional)
+
+**Return:**
+- JavaScript object or undefined
+
+## Callback Function Rules
+
+### Callback Parameter
+
+Callback functions receive a single object parameter:
+
+```javascript
+module.functionName({ key: 'value' }, (callbackData) => {
+    // callbackData is a JavaScript object
+    console.log(callbackData.key)
+})
+```
+
+### Go Callback Invocation
+
+```go
+callbackData := map[string]interface{}{
+    "key":   "value",
+    "result": "success",
+}
+jsonData, _ := json.Marshal(callbackData)
+C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
+```
+
+## Electron Support
+
+To compile for Electron, use the `-ev` parameter:
 
 ```bash
-# Compile
-go-node -input=test/hello.go -name=hello
-
-# Run test
-node test.js
+go-node -input=hello.go -name=hello -ev=28.0.0
 ```
 
-## Output Structure
+This will use the specified Electron version's headers instead of the default Node.js version.
 
-After compilation, the output directory structure is as follows:
+### Electron Version Compatibility
 
+Different Electron versions use different Node.js versions and ABIs. You must compile your module for the specific Electron version you're using:
+
+| Electron Version | Node.js Version | ABI |
+|-----------------|-----------------|-----|
+| 39.0.0 | 22.20.0 | 140 |
+| 38.0.0 | 22.12.0 | 138 |
+| 37.0.0 | 22.8.0 | 136 |
+| 36.0.0 | 22.6.0 | 134 |
+| 35.0.0 | 22.4.0 | 132 |
+| 34.0.0 | 22.2.0 | 130 |
+| 33.0.0 | 22.0.0 | 128 |
+| 32.0.0 | 20.16.0 | 127 |
+| 31.0.0 | 20.14.0 | 125 |
+| 30.0.0 | 20.12.0 | 123 |
+| 29.0.0 | 20.11.0 | 121 |
+| 28.0.0 | 20.9.0 | 119 |
+| 27.0.0 | 18.18.0 | 118 |
+| 26.0.0 | 18.16.0 | 116 |
+
+### Electron Example
+
+#### Go Code (electron-hello.go)
+
+```go
+package main
+
+/*
+#cgo CFLAGS: -I.
+#include "callback.h"
+*/
+import "C"
+import (
+    "encoding/json"
+    "fmt"
+    "time"
+    "unsafe"
+)
+
+var gCallNodeCallback uintptr
+
+//export RegisterGoCallback
+func RegisterGoCallback(fn uintptr) {
+    gCallNodeCallback = fn
+}
+
+//export Hello1
+func Hello1(params *C.char, callbackType *C.char) *C.char {
+    var inputData map[string]interface{}
+    json.Unmarshal([]byte(C.GoString(params)), &inputData)
+
+    name := ""
+    if n, ok := inputData["name"].(string); ok {
+        name = n
+    }
+
+    value := 0
+    if v, ok := inputData["value"].(float64); ok {
+        value = int(v)
+    }
+
+    result := value * 2
+
+    resultData := map[string]interface{}{
+        "name":   name,
+        "value":  value,
+        "result": result,
+    }
+    resultJson, _ := json.Marshal(resultData)
+
+    return C.CString(string(resultJson))
+}
+
+func main() {}
 ```
-output/
-└── module_name.node    # Node.js native module (Go dynamic library embedded)
-```
 
-**Note**: The Go dynamic library is embedded in the .node file and will be automatically extracted to the system temporary directory at runtime.
-
-## Temporary File Management
-
-The tool automatically manages temporary files:
-
-1. Creates a `go-node-tmp_{randomID}` temporary directory in the source file directory
-2. Generates `binding.gyp` and `wrapper.cc` files in the temporary directory
-3. Automatically cleans up the temporary directory after compilation
-4. Use `-no-cleanup` parameter to keep temporary files for debugging
-
-## Testing
-
-View `test/hello.go` for complete example code, run tests:
+#### Compile for Electron
 
 ```bash
-# Compile example
-go-node -input=test/hello.go -name=hello
-
-# Run test
-node test.js
+go-node -input=electron-hello.go -name=hello -output=output -ev=39.0.0
 ```
 
-## Known Limitations
+#### Electron Code (electron-test.js)
 
-1. **Package name limitation**: Only supports compilation of functions in main package
-2. **Platform specific**: Current implementation is mainly for Windows platform
-3. **Callback context**: Asynchronous callbacks use libuv to ensure execution in the correct V8 context
-4. **Parameter types**: Function parameters are uniformly passed as strings, complex types use JSON serialization
+```javascript
+const { app, BrowserWindow } = require('electron');
+const hello = require('./output/hello.node');
 
-## Technical Implementation
+console.log('Electron:', process.versions.electron);
+console.log('Node:', process.versions.node);
+console.log('ABI:', process.versions.modules);
 
-- **Go compilation**: Uses `go build -buildmode=c-shared` to generate dynamic library
-- **Node.js binding**: Uses node-gyp to generate C++ native module
-- **Cross-DLL communication**: Uses Windows API dynamic loading and function pointers
-- **Asynchronous callbacks**: Uses libuv's uv_async_t for thread-safe asynchronous callbacks
-- **Callback queue**: Uses mutex-protected queue to manage callback requests
+// Test basic function call
+console.log('Hello1:', hello.hello1({name: 'Alice', value: 21}));
+// Output: { name: 'Alice', value: 21, result: 42 }
+
+// Test with callback
+console.log('HelloWithCallback:', hello.helloWithCallback(
+    {test: 'Hello from Electron'}, 
+    (data) => {
+        console.log('Callback received:', data);
+    }
+));
+
+app.whenReady().then(() => {
+    const win = new BrowserWindow({ width: 800, height: 600 });
+    win.loadFile('index.html');
+});
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
+});
+```
+
+#### Run Electron App
+
+```bash
+npx electron@v39.0.0 electron-test.js
+```
+
+### Electron Headers Cache
+
+When you compile for Electron, the tool automatically downloads the Electron headers from `https://electronjs.org/headers` and caches them in:
+
+```
+C:\Users\<username>\App\Local\node-gyp\Cache\<electron-version>
+```
+
+This means subsequent compilations for the same Electron version will be faster.
 
 ## License
 
-MIT
+MIT License
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

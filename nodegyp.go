@@ -47,14 +47,18 @@ func buildWithNodeGyp(workDir, outputNodeDir string) error {
 	return nil
 }
 
-func runNodeGyp(workDir string, isElectron bool) error {
+func runNodeGyp(workDir string, isElectron bool, electronVersion string) error {
 	nodeGypPath := "C:\\Users\\admin\\AppData\\Roaming\\npm\\node-gyp.cmd"
 
 	var targetVersion, distURL string
 	var runtime string
 
 	if isElectron {
-		targetVersion = "39.0.0"
+		if electronVersion != "" {
+			targetVersion = electronVersion
+		} else {
+			targetVersion = "39.0.0"
+		}
 		distURL = "https://electronjs.org/headers"
 		runtime = "electron"
 	} else {

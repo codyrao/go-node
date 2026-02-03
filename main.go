@@ -18,6 +18,7 @@ type Config struct {
 	SourceDir   string
 	NoCleanup   bool
 	BuildDLL    bool
+	ElectronVer string
 }
 
 func main() {
@@ -38,6 +39,7 @@ func parseFlags() *Config {
 	flag.StringVar(&cfg.SourceDir, "source", "", "Go source file directory")
 	flag.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Do not cleanup temporary files after compilation")
 	flag.BoolVar(&cfg.BuildDLL, "dll", false, "Build DLL file instead of Node.js native module (for node-ffi)")
+	flag.StringVar(&cfg.ElectronVer, "ev", "", "Electron version (e.g., 28.0.0). If not specified, uses node-gyp's default Node.js version")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Go2Node - Compile Go code to Node.js native module
@@ -216,7 +218,8 @@ func run(cfg *Config) error {
 	fmt.Println()
 
 	fmt.Println("Step 4/4: Compiling with node-gyp...")
-	if err := runNodeGyp(tmpDir, true); err != nil {
+	isElectron := cfg.ElectronVer != ""
+	if err := runNodeGyp(tmpDir, isElectron, cfg.ElectronVer); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}

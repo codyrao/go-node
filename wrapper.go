@@ -60,124 +60,50 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 			continue
 		}
 
-		if fn == "ReturnString" {
-			// ReturnString - return raw string without JSON parsing
-			funcDecls += "typedef const char* (*" + funcName + "Fn)(const char*, const char*);\n" +
-				funcName + "Fn " + funcName + "Ptr = NULL;\n\n"
+		funcDecls += "typedef const char* (*" + funcName + "Fn)(const char*, const char*);\n" +
+			funcName + "Fn " + funcName + "Ptr = NULL;\n\n"
 
-			funcImpls += "void " + funcName + "Wrapper(const FunctionCallbackInfo<Value>& args) {\n" +
-				"    Isolate* isolate = args.GetIsolate();\n" +
-				"    \n" +
-				"    if (hDLL == NULL) {\n" +
-				"        isolate->ThrowException(Exception::Error(\n" +
-				"            String::NewFromUtf8(isolate, \"Go library not loaded\").ToLocalChecked()));\n" +
-				"        return;\n" +
-				"    }\n" +
-				"    \n" +
-				"    if (" + funcName + "Ptr == NULL) {\n" +
-				"        " + funcName + "Ptr = (" + funcName + "Fn)GetProcAddress(hDLL, \"" + funcName + "\");\n" +
-				"        if (" + funcName + "Ptr == NULL) {\n" +
-				"            isolate->ThrowException(Exception::Error(\n" +
-				"                String::NewFromUtf8(isolate, \"Failed to find function " + funcName + "\").ToLocalChecked()));\n" +
-				"            return;\n" +
-				"        }\n" +
-				"    }\n" +
-				"    \n" +
-				"    const char* arg1 = \"\";\n" +
-				"    const char* arg2 = \"\";\n" +
-				"    \n" +
-				"    if (args.Length() > 0) {\n" +
-				"        if (args[0]->IsArray()) {\n" +
-				"            Local<Array> arr = Local<Array>::Cast(args[0]);\n" +
-				"            Local<Context> context = isolate->GetCurrentContext();\n" +
-				"            Local<String> jsonStr = v8::JSON::Stringify(context, arr).ToLocalChecked();\n" +
-				"            String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
-				"            arg1 = strdup(*jsonUtf8);\n" +
-				"        } else if (args[0]->IsObject() && !args[0]->IsArray() && !args[0]->IsString()) {\n" +
-				"            Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
-				"            Local<Context> context = isolate->GetCurrentContext();\n" +
-				"            Local<String> jsonStr = v8::JSON::Stringify(context, obj).ToLocalChecked();\n" +
-				"            String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
-				"            arg1 = strdup(*jsonUtf8);\n" +
-				"        } else if (args[0]->IsString()) {\n" +
-				"            String::Utf8Value arg1Str(isolate, args[0]);\n" +
-				"            arg1 = strdup(*arg1Str);\n" +
-				"        }\n" +
-				"    }\n" +
-				"    \n" +
-				"    if (args.Length() > 1 && args[1]->IsString()) {\n" +
-				"        String::Utf8Value arg2Str(isolate, args[1]);\n" +
-				"        arg2 = strdup(*arg2Str);\n" +
-				"    }\n" +
-				"    \n" +
-				"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +
-				"    \n" +
-				"    if (result != NULL) {\n" +
-				"        args.GetReturnValue().Set(String::NewFromUtf8(isolate, result).ToLocalChecked());\n" +
-				"    }\n" +
-				"}\n\n"
-
-		} else {
-			// All other functions - support array parameters
-			funcDecls += "typedef const char* (*" + funcName + "Fn)(const char*, const char*);\n" +
-				funcName + "Fn " + funcName + "Ptr = NULL;\n\n"
-
-			funcImpls += "void " + funcName + "Wrapper(const FunctionCallbackInfo<Value>& args) {\n" +
-				"    Isolate* isolate = args.GetIsolate();\n" +
-				"    \n" +
-				"    if (hDLL == NULL) {\n" +
-				"        isolate->ThrowException(Exception::Error(\n" +
-				"            String::NewFromUtf8(isolate, \"Go library not loaded\").ToLocalChecked()));\n" +
-				"        return;\n" +
-				"    }\n" +
-				"    \n" +
-				"    if (" + funcName + "Ptr == NULL) {\n" +
-				"        " + funcName + "Ptr = (" + funcName + "Fn)GetProcAddress(hDLL, \"" + funcName + "\");\n" +
-				"        if (" + funcName + "Ptr == NULL) {\n" +
-				"            isolate->ThrowException(Exception::Error(\n" +
-				"                String::NewFromUtf8(isolate, \"Failed to find function " + funcName + "\").ToLocalChecked()));\n" +
-				"            return;\n" +
-				"        }\n" +
-				"    }\n" +
-				"    \n" +
-				"    const char* arg1 = \"\";\n" +
-				"    const char* arg2 = \"\";\n" +
-				"    \n" +
-				"    if (args.Length() > 0) {\n" +
-				"        if (args[0]->IsArray()) {\n" +
-				"            Local<Array> arr = Local<Array>::Cast(args[0]);\n" +
-				"            Local<Context> context = isolate->GetCurrentContext();\n" +
-				"            Local<String> jsonStr = v8::JSON::Stringify(context, arr).ToLocalChecked();\n" +
-				"            String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
-				"            arg1 = strdup(*jsonUtf8);\n" +
-				"        } else if (args[0]->IsObject() && !args[0]->IsArray() && !args[0]->IsString()) {\n" +
-				"            Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
-				"            Local<Context> context = isolate->GetCurrentContext();\n" +
-				"            Local<String> jsonStr = v8::JSON::Stringify(context, obj).ToLocalChecked();\n" +
-				"            String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
-				"            arg1 = strdup(*jsonUtf8);\n" +
-				"        } else if (args[0]->IsString()) {\n" +
-				"            String::Utf8Value arg1Str(isolate, args[0]);\n" +
-				"            arg1 = strdup(*arg1Str);\n" +
-				"        }\n" +
-				"    }\n" +
-				"    \n" +
-				"    if (args.Length() > 1 && args[1]->IsString()) {\n" +
-				"        String::Utf8Value arg2Str(isolate, args[1]);\n" +
-				"        arg2 = strdup(*arg2Str);\n" +
-				"    } else if (args.Length() > 1 && args[1]->IsFunction()) {\n" +
-				"        RegisterCallback(isolate, args[1].As<Function>());\n" +
-				"        arg2 = \"callback\";\n" +
-				"    }\n" +
-				"    \n" +
-				"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +
-				"    \n" +
-				"    if (result != NULL) {\n" +
-				"        Local<Value> parsedResult = ParseJSONResult(isolate, result);\n" +
-				"        args.GetReturnValue().Set(parsedResult);\n" +
-				"    }\n" +
-				"}\n\n"
-		}
+		funcImpls += "void " + funcName + "Wrapper(const FunctionCallbackInfo<Value>& args) {\n" +
+			"    Isolate* isolate = args.GetIsolate();\n" +
+			"    \n" +
+			"    if (hDLL == NULL) {\n" +
+			"        isolate->ThrowException(Exception::Error(\n" +
+			"            String::NewFromUtf8(isolate, \"Go library not loaded\").ToLocalChecked()));\n" +
+			"        return;\n" +
+			"    }\n" +
+			"    \n" +
+			"    if (" + funcName + "Ptr == NULL) {\n" +
+			"        " + funcName + "Ptr = (" + funcName + "Fn)GetProcAddress(hDLL, \"" + funcName + "\");\n" +
+			"        if (" + funcName + "Ptr == NULL) {\n" +
+			"            isolate->ThrowException(Exception::Error(\n" +
+			"                String::NewFromUtf8(isolate, \"Failed to find function " + funcName + "\").ToLocalChecked()));\n" +
+			"            return;\n" +
+			"        }\n" +
+			"    }\n" +
+			"    \n" +
+			"    const char* arg1 = \"\";\n" +
+			"    const char* arg2 = \"\";\n" +
+			"    \n" +
+			"    if (args.Length() > 0 && args[0]->IsObject() && !args[0]->IsArray()) {\n" +
+			"        Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
+			"        Local<Context> context = isolate->GetCurrentContext();\n" +
+			"        Local<String> jsonStr = v8::JSON::Stringify(context, obj).ToLocalChecked();\n" +
+			"        String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
+			"        arg1 = strdup(*jsonUtf8);\n" +
+			"    }\n" +
+			"    \n" +
+			"    if (args.Length() > 1 && args[1]->IsFunction()) {\n" +
+			"        RegisterCallback(isolate, args[1].As<Function>());\n" +
+			"        arg2 = \"callback\";\n" +
+			"    }\n" +
+			"    \n" +
+			"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +
+			"    \n" +
+			"    if (result != NULL) {\n" +
+			"        Local<Value> parsedResult = ParseJSONResult(isolate, result);\n" +
+			"        args.GetReturnValue().Set(parsedResult);\n" +
+			"    }\n" +
+			"}\n\n"
 
 		nodeMethods += "    NODE_SET_METHOD(exports, \"" + jsName + "\", " + funcName + "Wrapper);\n"
 	}
@@ -263,7 +189,7 @@ void CleanupEmbeddedDLL(const std::string& dllPath) {
 typedef void (*CallNodeCallbackType)(const char*);
 CallNodeCallbackType gCallNodeCallback = NULL;
 
-// Parse JSON result and return appropriate type
+// Parse JSON result and return object type
 Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
     if (jsonStr == NULL || strlen(jsonStr) == 0) {
         return Null(isolate);
@@ -279,78 +205,20 @@ Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
     TryCatch tryCatch(isolate);
     Local<Script> script;
     if (!Script::Compile(context, wrappedJsonStr).ToLocal(&script)) {
-        return String::NewFromUtf8(isolate, jsonStr).ToLocalChecked();
+        return Null(isolate);
     }
     
     Local<Value> parsed;
     if (!script->Run(context).ToLocal(&parsed)) {
-        return String::NewFromUtf8(isolate, jsonStr).ToLocalChecked();
+        return Null(isolate);
     }
     
-    if (!parsed->IsObject()) {
+    // Only return object type
+    if (parsed->IsObject()) {
         return parsed;
     }
     
-    Local<Object> obj = parsed->ToObject(context).ToLocalChecked();
-    Local<String> typeKey = String::NewFromUtf8(isolate, "_type").ToLocalChecked();
-    
-    if (!obj->Has(context, typeKey).FromJust()) {
-        return parsed;
-    }
-    
-    Local<Value> typeValue = obj->Get(context, typeKey).ToLocalChecked();
-    if (!typeValue->IsString()) {
-        return parsed;
-    }
-    
-    Local<String> typeStr = typeValue->ToString(context).ToLocalChecked();
-    String::Utf8Value typeUtf8(isolate, typeStr);
-    std::string type(*typeUtf8);
-    
-    Local<String> valueKey = String::NewFromUtf8(isolate, "value").ToLocalChecked();
-    
-    if (!obj->Has(context, valueKey).FromJust()) {
-        return parsed;
-    }
-    
-    Local<Value> value = obj->Get(context, valueKey).ToLocalChecked();
-    
-    if (type == "object") {
-        if (value->IsString()) {
-            String::Utf8Value valueStr(isolate, value);
-            // Wrap JSON string in parentheses to make it a valid JavaScript expression
-            std::string wrappedValueJson = "(" + std::string(*valueStr) + ")";
-            Local<String> valueJsonStr = String::NewFromUtf8(isolate, wrappedValueJson.c_str()).ToLocalChecked();
-            TryCatch valueTryCatch(isolate);
-            Local<Script> valueScript;
-            Local<Value> parsedValue;
-            if (Script::Compile(context, valueJsonStr).ToLocal(&valueScript) && valueScript->Run(context).ToLocal(&parsedValue)) {
-                return parsedValue;
-            }
-        }
-        if (value->IsObject()) {
-            return value;
-        }
-        return parsed;
-    } else if (type == "int") {
-        if (value->IsNumber()) {
-            return Number::New(isolate, value->NumberValue(context).FromJust());
-        }
-    } else if (type == "float") {
-        if (value->IsNumber()) {
-            return Number::New(isolate, value->NumberValue(context).FromJust());
-        }
-    } else if (type == "bool") {
-        if (value->IsBoolean()) {
-            return Boolean::New(isolate, value->BooleanValue(isolate));
-        }
-    } else if (type == "string") {
-        if (value->IsString()) {
-            return value;
-        }
-    }
-    
-    return parsed;
+    return Null(isolate);
 }
 
 ` + funcDecls + `// Global variables
@@ -591,7 +459,7 @@ func toCamelCase(s string) string {
 	}
 	parts := strings.Split(s, "_")
 	if len(parts) == 1 {
-		return s
+		return strings.ToLower(s[:1]) + s[1:]
 	}
 	for i := 0; i < len(parts); i++ {
 		if len(parts[i]) > 0 {
