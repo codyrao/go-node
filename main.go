@@ -17,6 +17,7 @@ type Config struct {
 	PackageName string
 	SourceDir   string
 	NoCleanup   bool
+	BuildDLL    bool
 }
 
 func main() {
@@ -36,6 +37,7 @@ func parseFlags() *Config {
 	flag.StringVar(&cfg.PackageName, "package", "main", "Go package name, default main (only functions in main package will be compiled)")
 	flag.StringVar(&cfg.SourceDir, "source", "", "Go source file directory")
 	flag.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Do not cleanup temporary files after compilation")
+	flag.BoolVar(&cfg.BuildDLL, "dll", false, "Build DLL file instead of Node.js native module (for node-ffi)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Go2Node - Compile Go code to Node.js native module
@@ -50,6 +52,7 @@ Options:
 Examples:
   go2node -input=hello.go -name=hello
   go2node -input=hello.go -name=hello -output=./dist
+  go2node -input=hello.go -name=hello -dll
 `)
 	}
 
@@ -163,6 +166,28 @@ func run(cfg *Config) error {
 	}
 	fmt.Printf("Found export functions: %v\n\n", functions)
 
+	if cfg.BuildDLL {
+		// 直接输出 DLL 文件（用于 node-ffi）
+		fmt.Println("Step 3/3: Copying DLL file...")
+		dllPath := filepath.Join(workDir, "build", cfg.ModuleName+".dll")
+		outputDLLPath := filepath.Join(outputNodeDir, cfg.ModuleName+".dll")
+
+		if err := copyFile(dllPath, outputDLLPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to copy DLL to output directory: %v\n", err)
+			return err
+		}
+		fmt.Printf("Copied DLL file to: %s\n", outputDLLPath)
+		fmt.Println()
+
+		fmt.Println("========================")
+		fmt.Println("Compilation completed!")
+		fmt.Println("Output files:")
+		fmt.Printf("  - %s (for node-ffi)\n", outputDLLPath)
+		fmt.Println("========================")
+
+		return nil
+	}
+
 	fmt.Println("Step 3/4: Generating binding files...")
 	dllPath := filepath.Join(workDir, "build", cfg.ModuleName+".dll")
 
@@ -191,7 +216,7 @@ func run(cfg *Config) error {
 	fmt.Println()
 
 	fmt.Println("Step 4/4: Compiling with node-gyp...")
-	if err := runNodeGyp(tmpDir); err != nil {
+	if err := runNodeGyp(tmpDir, true); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
 	}

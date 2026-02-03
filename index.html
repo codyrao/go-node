@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Electron Test</title>
+</head>
+<body>
+    <h1>Electron v39 + go-node Test</h1>
+    <div id="output"></div>
+    <script>
+        const { ipcRenderer } = require('electron');
+        const hello = require('./output/hello.node');
+        
+        const output = document.getElementById('output');
+        output.innerHTML = `
+            <h2>Version Info</h2>
+            <p>Electron: ${process.versions.electron}</p>
+            <p>Node: ${process.versions.node}</p>
+            <p>ABI: ${process.versions.modules}</p>
+            <hr>
+            <h2>go-node Test Results</h2>
+            <p>hello1: ${hello.hello1()}</p>
+            <p>hello2: ${hello.hello2()}</p>
+            <p>ReturnString: ${hello.returnString()}</p>
+            <p>ReturnInt: ${hello.returnInt()}</p>
+            <p>ReturnFloat: ${hello.returnFloat()}</p>
+            <p>ReturnBool: ${hello.returnBool()}</p>
+            <p>ReturnObject: ${JSON.stringify(hello.returnObject())}</p>
+            <p>ReturnNestedObject: ${JSON.stringify(hello.returnNestedObject())}</p>
+        `;
+    </script>
+</body>
+</html>

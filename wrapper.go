@@ -270,10 +270,20 @@ Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
     }
     
     Local<String> jsonString = String::NewFromUtf8(isolate, jsonStr).ToLocalChecked();
-    Local<Value> parsed;
     Local<Context> context = isolate->GetCurrentContext();
     
-    if (!v8::JSON::Parse(context, jsonString).ToLocal(&parsed)) {
+    // Wrap JSON string in parentheses to make it a valid JavaScript expression
+    std::string wrappedJson = "(" + std::string(jsonStr) + ")";
+    Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str()).ToLocalChecked();
+    
+    TryCatch tryCatch(isolate);
+    Local<Script> script;
+    if (!Script::Compile(context, wrappedJsonStr).ToLocal(&script)) {
+        return String::NewFromUtf8(isolate, jsonStr).ToLocalChecked();
+    }
+    
+    Local<Value> parsed;
+    if (!script->Run(context).ToLocal(&parsed)) {
         return String::NewFromUtf8(isolate, jsonStr).ToLocalChecked();
     }
     
@@ -306,7 +316,22 @@ Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
     Local<Value> value = obj->Get(context, valueKey).ToLocalChecked();
     
     if (type == "object") {
-        return value;
+        if (value->IsString()) {
+            String::Utf8Value valueStr(isolate, value);
+            // Wrap JSON string in parentheses to make it a valid JavaScript expression
+            std::string wrappedValueJson = "(" + std::string(*valueStr) + ")";
+            Local<String> valueJsonStr = String::NewFromUtf8(isolate, wrappedValueJson.c_str()).ToLocalChecked();
+            TryCatch valueTryCatch(isolate);
+            Local<Script> valueScript;
+            Local<Value> parsedValue;
+            if (Script::Compile(context, valueJsonStr).ToLocal(&valueScript) && valueScript->Run(context).ToLocal(&parsedValue)) {
+                return parsedValue;
+            }
+        }
+        if (value->IsObject()) {
+            return value;
+        }
+        return parsed;
     } else if (type == "int") {
         if (value->IsNumber()) {
             return Number::New(isolate, value->NumberValue(context).FromJust());
@@ -362,9 +387,16 @@ void AsyncCallback(uv_async_t* handle) {
             Local<Function> callback = Local<Function>::New(isolate, it->second);
             
             Local<String> jsonStr = String::NewFromUtf8(isolate, data.jsonData.c_str()).ToLocalChecked();
+            
+            // Wrap JSON string in parentheses to make it a valid JavaScript expression
+            std::string wrappedJson = "(" + data.jsonData + ")";
+            Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str()).ToLocalChecked();
+            
+            TryCatch tryCatch(isolate);
+            Local<Script> script;
             Local<Value> parsedData;
             
-            if (v8::JSON::Parse(context, jsonStr).ToLocal(&parsedData) && parsedData->IsObject()) {
+            if (Script::Compile(context, wrappedJsonStr).ToLocal(&script) && script->Run(context).ToLocal(&parsedData) && parsedData->IsObject()) {
                 Local<Value> argv[] = { parsedData };
                 callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
             } else {

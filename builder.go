@@ -26,6 +26,7 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 	args := []string{
 		"build",
 		"-buildmode=c-shared",
+		"-ldflags", "-s -w",
 		"-o", dllPath,
 	}
 
@@ -40,7 +41,8 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 		"GOARCH=amd64",
 		"GO111MODULE=on",
 		"GOPROXY=direct",
-		"CGO_CFLAGS=-I.",
+		"CGO_CFLAGS=-I. -Os",
+		"CGO_LDFLAGS=-s -w",
 	)
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
@@ -58,6 +60,16 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 	if _, err := os.Stat(dllPath); os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "Error: Shared library file not generated: %s\n", dllPath)
 		return fmt.Errorf("shared library file not generated: %s", dllPath)
+	}
+
+	// 使用UPX压缩DLL
+	fmt.Printf("Compressing DLL with UPX...\n")
+	upxCmd := exec.Command("upx", "--best", "--lzma", dllPath)
+	upxCmd.Stdout = os.Stdout
+	upxCmd.Stderr = os.Stderr
+	if err := upxCmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: UPX compression failed (may not be installed): %v\n", err)
+		fmt.Fprintf(os.Stderr, "Continuing without UPX compression...\n")
 	}
 
 	return nil

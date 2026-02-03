@@ -21,12 +21,15 @@ const bindingGypTemplate = `{
         "VCLinkerTool": {
           "AdditionalLibraryDirectories": [
             "$(ConfigurationPath)"
-          ]
+          ],
+          "AdditionalOptions": [ "/OPT:REF", "/OPT:ICF" ]
         },
         "VCResourceCompilerTool": {
           "ResourceFileName": "$(IntDir)%(Filename).res"
         },
         "VCCLCompilerTool": {
+          "Optimization": 2,
+          "FavorSizeOrSpeed": 2,
           "AdditionalOptions": [ "/wd4018" ]
         }
       },
