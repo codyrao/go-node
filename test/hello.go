@@ -46,33 +46,6 @@ func Hello1(params *C.char, callbackType *C.char) *C.char {
 	return C.CString(string(resultJson))
 }
 
-//export Hello2
-func Hello2(params *C.char, callbackType *C.char) *C.char {
-	var inputData map[string]interface{}
-	json.Unmarshal([]byte(C.GoString(params)), &inputData)
-
-	name := ""
-	if n, ok := inputData["name"].(string); ok {
-		name = n
-	}
-
-	value := 0.0
-	if v, ok := inputData["value"].(float64); ok {
-		value = v
-	}
-
-	result := value * 1.5
-
-	resultData := map[string]interface{}{
-		"name":   name,
-		"value":  value,
-		"result": result,
-	}
-	resultJson, _ := json.Marshal(resultData)
-
-	return C.CString(string(resultJson))
-}
-
 //export HelloWithCallback
 func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
 	var inputData map[string]interface{}
@@ -169,56 +142,6 @@ func ProcessObject(params *C.char, callbackType *C.char) *C.char {
 
 	resultJson, _ := json.Marshal(processed)
 	return C.CString(string(resultJson))
-}
-
-//export Calculate
-func Calculate(params *C.char, callbackType *C.char) *C.char {
-	var inputData map[string]interface{}
-	json.Unmarshal([]byte(C.GoString(params)), &inputData)
-
-	a := 0.0
-	if v, ok := inputData["a"].(float64); ok {
-		a = v
-	}
-
-	b := 0.0
-	if v, ok := inputData["b"].(float64); ok {
-		b = v
-	}
-
-	operation := "add"
-	if op, ok := inputData["operation"].(string); ok {
-		operation = op
-	}
-
-	var result float64
-	switch operation {
-	case "add":
-		result = a + b
-	case "subtract":
-		result = a - b
-	case "multiply":
-		result = a * b
-	case "divide":
-		if b != 0 {
-			result = a / b
-		}
-	}
-
-	resultData := map[string]interface{}{
-		"a":         a,
-		"b":         b,
-		"operation": operation,
-		"result":    result,
-	}
-	resultJson, _ := json.Marshal(resultData)
-
-	return C.CString(string(resultJson))
-}
-
-//export NoReturn
-func NoReturn(params *C.char, callbackType *C.char) *C.char {
-	return nil
 }
 
 func main() {}
