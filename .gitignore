@@ -1,3 +1,6 @@
 .trae/
 .vscode/
+issue/
+.omc/
+.claude/
 go-node.exe

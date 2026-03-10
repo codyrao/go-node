@@ -82,7 +82,7 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 			"    }\n" +
 			"    \n" +
 			"    const char* arg1 = \"\";\n" +
-			"    const char* arg2 = \"\";\n" +
+			"    const char* arg2 = \"" + jsName + "\";\n" +
 			"    \n" +
 			"    if (args.Length() > 0 && args[0]->IsObject() && !args[0]->IsArray()) {\n" +
 			"        Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
@@ -94,7 +94,6 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 			"    \n" +
 			"    if (args.Length() > 1 && args[1]->IsFunction()) {\n" +
 			"        RegisterCallback(isolate, args[1].As<Function>());\n" +
-			"        arg2 = \"callback\";\n" +
 			"    }\n" +
 			"    \n" +
 			"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +

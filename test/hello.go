@@ -51,6 +51,8 @@ func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
+	cbType := C.GoString(callbackType)
+
 	testMsg := "default"
 	if msg, ok := inputData["test"].(string); ok {
 		testMsg = msg
@@ -61,8 +63,9 @@ func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
 			time.Sleep(300 * time.Millisecond)
 
 			callbackData := map[string]interface{}{
-				"test":   testMsg,
-				"result": fmt.Sprintf("Callback %d", i),
+				"callbackType": cbType,
+				"test":         testMsg,
+				"result":       fmt.Sprintf("Callback %d", i),
 			}
 			jsonData, _ := json.Marshal(callbackData)
 
@@ -71,8 +74,9 @@ func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
 	}
 
 	resultData := map[string]interface{}{
-		"status": "success",
-		"result": 42,
+		"callbackType": cbType,
+		"status":       "success",
+		"result":       42,
 	}
 	resultJson, _ := json.Marshal(resultData)
 
@@ -84,6 +88,8 @@ func AsyncHello(params *C.char, callbackType *C.char) *C.char {
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
+	cbType := C.GoString(callbackType)
+
 	testMsg := "default"
 	if msg, ok := inputData["test"].(string); ok {
 		testMsg = msg
@@ -94,8 +100,9 @@ func AsyncHello(params *C.char, callbackType *C.char) *C.char {
 			time.Sleep(500 * time.Millisecond)
 
 			callbackData := map[string]interface{}{
-				"test":   testMsg,
-				"result": fmt.Sprintf("Async callback %d", i),
+				"callbackType": cbType,
+				"test":         testMsg,
+				"result":       fmt.Sprintf("Async callback %d", i),
 			}
 			jsonData, _ := json.Marshal(callbackData)
 
@@ -104,8 +111,9 @@ func AsyncHello(params *C.char, callbackType *C.char) *C.char {
 	}()
 
 	resultData := map[string]interface{}{
-		"status": "success",
-		"result": "Async started",
+		"callbackType": cbType,
+		"status":       "success",
+		"result":       "Async started",
 	}
 	resultJson, _ := json.Marshal(resultData)
 
