@@ -1,0 +1,69 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1773045147757,
+  "projectRoot": "C:\\Users\\admin\\Documents\\goproject\\xlasgame\\go-node",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Go",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "go.mod"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "go",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "test"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "output": {
+      "path": "output",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1773045147736,
+      "keyFiles": [
+        "hello.node"
+      ]
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 3,
+      "lastAccessed": 1773045147737,
+      "keyFiles": [
+        "hello.go",
+        "test-chinese.js",
+        "test.js"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

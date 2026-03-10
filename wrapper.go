@@ -195,12 +195,15 @@ Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
         return Null(isolate);
     }
     
-    Local<String> jsonString = String::NewFromUtf8(isolate, jsonStr).ToLocalChecked();
+    // Use UTF-8 encoding explicitly
+    Local<String> jsonString = String::NewFromUtf8(isolate, jsonStr, 
+        NewStringType::kNormal, strlen(jsonStr)).ToLocalChecked();
     Local<Context> context = isolate->GetCurrentContext();
     
     // Wrap JSON string in parentheses to make it a valid JavaScript expression
     std::string wrappedJson = "(" + std::string(jsonStr) + ")";
-    Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str()).ToLocalChecked();
+    Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str(), 
+        NewStringType::kNormal, wrappedJson.length()).ToLocalChecked();
     
     TryCatch tryCatch(isolate);
     Local<Script> script;
@@ -254,11 +257,14 @@ void AsyncCallback(uv_async_t* handle) {
             auto it = callbackMap.begin();
             Local<Function> callback = Local<Function>::New(isolate, it->second);
             
-            Local<String> jsonStr = String::NewFromUtf8(isolate, data.jsonData.c_str()).ToLocalChecked();
+            // Use UTF-8 encoding explicitly
+            Local<String> jsonStr = String::NewFromUtf8(isolate, data.jsonData.c_str(), 
+                NewStringType::kNormal, data.jsonData.length()).ToLocalChecked();
             
             // Wrap JSON string in parentheses to make it a valid JavaScript expression
             std::string wrappedJson = "(" + data.jsonData + ")";
-            Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str()).ToLocalChecked();
+            Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str(), 
+                NewStringType::kNormal, wrappedJson.length()).ToLocalChecked();
             
             TryCatch tryCatch(isolate);
             Local<Script> script;
