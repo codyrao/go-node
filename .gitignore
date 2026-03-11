@@ -3,4 +3,4 @@
 issue/
 .omc/
 .claude/
-go-node.exe
+go-node.exetest/output/

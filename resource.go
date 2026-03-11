@@ -9,13 +9,11 @@ import (
 func generateResourceRC(workDir, moduleName string, dllPath string) error {
 	resourcePath := filepath.Join(workDir, moduleName+".rc")
 
-	// Use only filename, not full path
 	dllFileName := filepath.Base(dllPath)
 
-	// Use string name instead of numeric ID
 	content := `#include <winuser.h>
 
-` + moduleName + `_DLL RCDATA "` + dllFileName + `"
+1 RCDATA "` + dllFileName + `"
 `
 
 	file, err := os.Create(resourcePath)

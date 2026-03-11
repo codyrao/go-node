@@ -22,10 +22,37 @@ func generateCallbackHeader(workDir string) error {
 #endif
 
 typedef void (*CallbackFunc)(const char*);
+typedef void (*CallbackFuncWithName)(const char*, const char*);
+typedef void (*CallbackFuncWithId)(int32_t, const char*);
+typedef void (*CallbackControlFunc)(int32_t);
 
 static void callCallback(void* ptr, const char* data) {
     if (ptr != NULL) {
         ((CallbackFunc)ptr)(data);
+    }
+}
+
+static void callCallbackWithFuncName(void* ptr, const char* funcName, const char* data) {
+    if (ptr != NULL) {
+        ((CallbackFuncWithName)ptr)(funcName, data);
+    }
+}
+
+static void callCallbackWithId(void* ptr, int32_t callbackId, const char* data) {
+    if (ptr != NULL) {
+        ((CallbackFuncWithId)ptr)(callbackId, data);
+    }
+}
+
+static void keepCallback(void* ptr, int32_t callbackId) {
+    if (ptr != NULL) {
+        ((CallbackControlFunc)ptr)(callbackId);
+    }
+}
+
+static void freeCallback(void* ptr, int32_t callbackId) {
+    if (ptr != NULL) {
+        ((CallbackControlFunc)ptr)(callbackId);
     }
 }
 
@@ -82,7 +109,10 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 			"    }\n" +
 			"    \n" +
 			"    const char* arg1 = \"\";\n" +
-			"    const char* arg2 = \"" + jsName + "\";\n" +
+			"    bool freeArg1 = false;\n" +
+			"    std::string callbackToken;\n" +
+			"    int32_t callbackId = -1;\n" +
+			"    const char* arg2 = \"\";\n" +
 			"    \n" +
 			"    if (args.Length() > 0 && args[0]->IsObject() && !args[0]->IsArray()) {\n" +
 			"        Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
@@ -90,13 +120,22 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 			"        Local<String> jsonStr = v8::JSON::Stringify(context, obj).ToLocalChecked();\n" +
 			"        String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
 			"        arg1 = strdup(*jsonUtf8);\n" +
+			"        freeArg1 = true;\n" +
 			"    }\n" +
 			"    \n" +
 			"    if (args.Length() > 1 && args[1]->IsFunction()) {\n" +
-			"        RegisterCallback(isolate, args[1].As<Function>());\n" +
+			"        callbackId = RegisterCallback(isolate, args[1].As<Function>());\n" +
+			"        callbackToken = std::to_string(callbackId);\n" +
+			"        arg2 = callbackToken.c_str();\n" +
 			"    }\n" +
 			"    \n" +
 			"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +
+			"    if (callbackId >= 0) {\n" +
+			"        ReleaseCallback(callbackId);\n" +
+			"    }\n" +
+			"    if (freeArg1) {\n" +
+			"        free((void*)arg1);\n" +
+			"    }\n" +
 			"    \n" +
 			"    if (result != NULL) {\n" +
 			"        Local<Value> parsedResult = ParseJSONResult(isolate, result);\n" +
@@ -119,8 +158,11 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 #include <fstream>
 
 #pragma warning(disable: 4018)
+#pragma warning(disable: 4996)
 
 using namespace v8;
+
+#define GO_NODE_DLL_RESOURCE_ID 1
 
 // Extract embedded DLL from resources
 std::string ExtractEmbeddedDLL() {
@@ -129,8 +171,15 @@ std::string ExtractEmbeddedDLL() {
     if (result == 0 || result > MAX_PATH) {
         return "";
     }
-    
-    std::string dllPath = std::string(tempPath) + "` + moduleName + `.dll";
+
+    char tempFilePath[MAX_PATH];
+    if (GetTempFileNameA(tempPath, "gnd", 0, tempFilePath) == 0) {
+        return "";
+    }
+
+    DeleteFileA(tempFilePath);
+
+    std::string dllPath = std::string(tempFilePath) + ".dll";
     
     // First, try to find DLL in the same directory as the .node file
     char modulePath[MAX_PATH];
@@ -156,7 +205,7 @@ std::string ExtractEmbeddedDLL() {
     
     // Try to extract from resources
     if (hModule != NULL) {
-        HRSRC hRes = FindResourceA(hModule, "` + moduleName + `_DLL", RT_RCDATA);
+        HRSRC hRes = FindResourceA(hModule, MAKEINTRESOURCEA(GO_NODE_DLL_RESOURCE_ID), RT_RCDATA);
         if (hRes != NULL) {
             HGLOBAL hLoaded = LoadResource(hModule, hRes);
             if (hLoaded != NULL) {
@@ -183,10 +232,6 @@ void CleanupEmbeddedDLL(const std::string& dllPath) {
         DeleteFileA(dllPath.c_str());
     }
 }
-
-// Callback function type and global variable
-typedef void (*CallNodeCallbackType)(const char*);
-CallNodeCallbackType gCallNodeCallback = NULL;
 
 // Parse JSON result and return object type
 Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
@@ -223,14 +268,24 @@ Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
     return Null(isolate);
 }
 
-` + funcDecls + `// Global variables
+` + funcDecls + `struct CallbackEntry {
+    Global<Function> callback;
+    bool closed;
+    bool persistent;
+    uint32_t pendingCount;
+    uint32_t activeCalls;
+};
+
+// Global variables
 HMODULE hDLL = NULL;
-std::map<int32_t, Global<Function>> callbackMap;
+std::map<int32_t, CallbackEntry> callbackMap;
 int32_t nextCallbackId = 0;
 Isolate* gIsolate = NULL;
+std::mutex callbackMutex;
 
 // Async callback handling
 struct CallbackData {
+    int32_t callbackId;
     std::string jsonData;
 };
 
@@ -246,36 +301,65 @@ void AsyncCallback(uv_async_t* handle) {
     Local<Context> context = isolate->GetCurrentContext();
     Context::Scope contextScope(context);
     
-    std::lock_guard<std::mutex> lock(queueMutex);
-    
-    while (!callbackQueue.empty()) {
-        CallbackData data = callbackQueue.front();
-        callbackQueue.pop();
+    while (true) {
+        CallbackData data;
+        {
+            std::lock_guard<std::mutex> lock(queueMutex);
+            if (callbackQueue.empty()) {
+                break;
+            }
+
+            data = callbackQueue.front();
+            callbackQueue.pop();
+        }
+
+        Local<Function> callback;
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            auto it = callbackMap.find(data.callbackId);
+            if (it == callbackMap.end()) {
+                continue;
+            }
+
+            callback = Local<Function>::New(isolate, it->second.callback);
+        }
+
+        if (callback.IsEmpty()) {
+            continue;
+        }
         
-        if (callbackMap.size() > 0) {
-            auto it = callbackMap.begin();
-            Local<Function> callback = Local<Function>::New(isolate, it->second);
-            
-            // Use UTF-8 encoding explicitly
-            Local<String> jsonStr = String::NewFromUtf8(isolate, data.jsonData.c_str(), 
-                NewStringType::kNormal, data.jsonData.length()).ToLocalChecked();
-            
-            // Wrap JSON string in parentheses to make it a valid JavaScript expression
-            std::string wrappedJson = "(" + data.jsonData + ")";
-            Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str(), 
-                NewStringType::kNormal, wrappedJson.length()).ToLocalChecked();
-            
-            TryCatch tryCatch(isolate);
-            Local<Script> script;
-            Local<Value> parsedData;
-            
-            if (Script::Compile(context, wrappedJsonStr).ToLocal(&script) && script->Run(context).ToLocal(&parsedData) && parsedData->IsObject()) {
-                Local<Value> argv[] = { parsedData };
-                callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
-            } else {
-                Local<Object> emptyObj = Object::New(isolate);
-                Local<Value> argv[] = { emptyObj };
-                callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
+        // Wrap JSON string in parentheses to make it a valid JavaScript expression
+        std::string wrappedJson = "(" + data.jsonData + ")";
+        Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str(), 
+            NewStringType::kNormal, wrappedJson.length()).ToLocalChecked();
+        
+        TryCatch tryCatch(isolate);
+        Local<Script> script;
+        Local<Value> parsedData;
+        
+        if (Script::Compile(context, wrappedJsonStr).ToLocal(&script) && script->Run(context).ToLocal(&parsedData) && parsedData->IsObject()) {
+            Local<Value> argv[] = { parsedData };
+            callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
+        } else {
+            Local<Object> emptyObj = Object::New(isolate);
+            Local<Value> argv[] = { emptyObj };
+            callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(callbackMutex);
+            auto it = callbackMap.find(data.callbackId);
+            if (it == callbackMap.end()) {
+                continue;
+            }
+
+            if (it->second.pendingCount > 0) {
+                it->second.pendingCount--;
+            }
+
+            if (it->second.closed && it->second.pendingCount == 0 && it->second.activeCalls == 0) {
+                it->second.callback.Reset();
+                callbackMap.erase(it);
             }
         }
     }
@@ -289,13 +373,36 @@ void InitializeAsyncHandle() {
 
 // Callback registration and invocation
 int32_t RegisterCallback(Isolate* isolate, Local<Function> callback) {
+    std::lock_guard<std::mutex> lock(callbackMutex);
+
     int32_t id = nextCallbackId++;
-    callbackMap[id] = Global<Function>(isolate, callback);
+    CallbackEntry entry;
+    entry.callback = Global<Function>(isolate, callback);
+    entry.closed = false;
+    entry.persistent = false;
+    entry.pendingCount = 0;
+    entry.activeCalls = 1;
+    callbackMap[id] = std::move(entry);
+
     return id;
 }
 
-void CallNodeCallback(const char* jsonData) {
+typedef void (*CallNodeCallbackType)(int32_t, const char*);
+typedef void (*CallbackControlType)(int32_t);
+
+void CallNodeCallback(int32_t callbackId, const char* jsonData) {
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex);
+        auto it = callbackMap.find(callbackId);
+        if (it == callbackMap.end() || it->second.closed) {
+            return;
+        }
+
+        it->second.pendingCount++;
+    }
+
     CallbackData data;
+    data.callbackId = callbackId;
     data.jsonData = jsonData;
     
     {
@@ -306,10 +413,51 @@ void CallNodeCallback(const char* jsonData) {
     uv_async_send(&async_handle);
 }
 
-void ClearCallback(int32_t callbackId) {
+void KeepCallback(int32_t callbackId) {
+    std::lock_guard<std::mutex> lock(callbackMutex);
+
     auto it = callbackMap.find(callbackId);
-    if (it != callbackMap.end()) {
-        it->second.Reset();
+    if (it == callbackMap.end() || it->second.closed) {
+        return;
+    }
+
+    it->second.persistent = true;
+}
+
+void ReleaseCallback(int32_t callbackId) {
+    std::lock_guard<std::mutex> lock(callbackMutex);
+
+    auto it = callbackMap.find(callbackId);
+    if (it == callbackMap.end()) {
+        return;
+    }
+
+    if (it->second.activeCalls > 0) {
+        it->second.activeCalls--;
+    }
+
+    if (!it->second.persistent) {
+        it->second.closed = true;
+    }
+
+    if (it->second.closed && it->second.pendingCount == 0 && it->second.activeCalls == 0) {
+        it->second.callback.Reset();
+        callbackMap.erase(it);
+    }
+}
+
+void CloseCallback(int32_t callbackId) {
+    std::lock_guard<std::mutex> lock(callbackMutex);
+
+    auto it = callbackMap.find(callbackId);
+    if (it == callbackMap.end()) {
+        return;
+    }
+
+    it->second.closed = true;
+    it->second.persistent = false;
+    if (it->second.pendingCount == 0 && it->second.activeCalls == 0) {
+        it->second.callback.Reset();
         callbackMap.erase(it);
     }
 }
@@ -343,8 +491,10 @@ void LoadGoLibrary(const FunctionCallbackInfo<Value>& args) {
 void UnloadGoLibrary(const FunctionCallbackInfo<Value>& args) {
     Isolate* isolate = args.GetIsolate();
     
+    std::lock_guard<std::mutex> lock(callbackMutex);
+
     for (auto& pair : callbackMap) {
-        pair.second.Reset();
+        pair.second.callback.Reset();
     }
     callbackMap.clear();
     
@@ -358,16 +508,12 @@ void UnloadGoLibrary(const FunctionCallbackInfo<Value>& args) {
 
 // Exported callback functions for Go
 extern "C" {
-    __declspec(dllexport) void CallCallback(const char* jsonData) {
-        CallNodeCallback(jsonData);
+    __declspec(dllexport) void CallCallback(int32_t callbackId, const char* jsonData) {
+        CallNodeCallback(callbackId, jsonData);
     }
-    
+
     __declspec(dllexport) void FreeCallback(int32_t callbackId) {
-        ClearCallback(callbackId);
-    }
-    
-    __declspec(dllexport) void RegisterGoCallback(CallNodeCallbackType fn) {
-        gCallNodeCallback = fn;
+        CloseCallback(callbackId);
     }
 }
 
@@ -399,12 +545,15 @@ void Initialize(Local<Object> exports) {
     
     // Register callback function in Go DLL
     typedef void (*RegisterGoCallbackType)(CallNodeCallbackType);
-    RegisterGoCallbackType registerGoCallback = (RegisterGoCallbackType)GetProcAddress(hDLL, "RegisterGoCallback");
-    if (registerGoCallback != NULL) {
-        registerGoCallback(CallNodeCallback);
-        printf("Called RegisterGoCallback\\n");
+    typedef void (*RegisterGoCallbackExType)(CallNodeCallbackType, CallbackControlType, CallbackControlType);
+    RegisterGoCallbackExType registerGoCallbackEx = (RegisterGoCallbackExType)GetProcAddress(hDLL, "RegisterGoCallbackEx");
+    if (registerGoCallbackEx != NULL) {
+        registerGoCallbackEx(CallNodeCallback, KeepCallback, CloseCallback);
     } else {
-        printf("RegisterGoCallback not found in DLL\\n");
+        RegisterGoCallbackType registerGoCallback = (RegisterGoCallbackType)GetProcAddress(hDLL, "RegisterGoCallback");
+        if (registerGoCallback != NULL) {
+            registerGoCallback(CallNodeCallback);
+        }
     }
     
     NODE_SET_METHOD(exports, "init", InitializeWrapper);
@@ -431,12 +580,15 @@ void InitializeWrapper(const FunctionCallbackInfo<Value>& args) {
         
         // Register callback function in Go DLL
         typedef void (*RegisterGoCallbackType)(CallNodeCallbackType);
-        RegisterGoCallbackType registerGoCallback = (RegisterGoCallbackType)GetProcAddress(hDLL, "RegisterGoCallback");
-        if (registerGoCallback != NULL) {
-            registerGoCallback(CallNodeCallback);
-            printf("Called RegisterGoCallback\\n");
+        typedef void (*RegisterGoCallbackExType)(CallNodeCallbackType, CallbackControlType, CallbackControlType);
+        RegisterGoCallbackExType registerGoCallbackEx = (RegisterGoCallbackExType)GetProcAddress(hDLL, "RegisterGoCallbackEx");
+        if (registerGoCallbackEx != NULL) {
+            registerGoCallbackEx(CallNodeCallback, KeepCallback, CloseCallback);
         } else {
-            printf("RegisterGoCallback not found in DLL\\n");
+            RegisterGoCallbackType registerGoCallback = (RegisterGoCallbackType)GetProcAddress(hDLL, "RegisterGoCallback");
+            if (registerGoCallback != NULL) {
+                registerGoCallback(CallNodeCallback);
+            }
         }
     }
     

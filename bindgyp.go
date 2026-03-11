@@ -30,7 +30,7 @@ const bindingGypTemplate = `{
         "VCCLCompilerTool": {
           "Optimization": 2,
           "FavorSizeOrSpeed": 2,
-          "AdditionalOptions": [ "/wd4018" ]
+          "AdditionalOptions": [ "/wd4018", "/wd4996" ]
         }
       },
       "conditions": [

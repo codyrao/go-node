@@ -1,57 +1,63 @@
-const hello = require('./output/hello.node');
+const assert = require('assert');
+const path = require('path');
 
-console.log('=== Testing go-node with new structure ===\n');
+const outputDir = process.env.GO_NODE_OUTPUT_DIR || 'output';
+const hello = require(path.join(__dirname, outputDir, 'hello.node'));
 
-console.log('1. Test Hello1 - basic object parameter:');
-const result1 = hello.hello1({ name: 'Alice', value: 21 });
-console.log('Result:', result1);
-console.log();
+async function main() {
+  const result1 = hello.hello1({ name: 'Alice', value: 21 });
+  assert.deepStrictEqual(result1, {
+    name: 'Alice',
+    value: 21,
+    result: 42
+  });
 
-console.log('2. Test Hello2 - float calculation:');
-const result2 = hello.hello2({ name: 'Bob', value: 10.5 });
-console.log('Result:', result2);
-console.log();
+  const result2 = hello.processObject({
+    name: 'Charlie',
+    age: 25,
+    items: ['item1', 'item2', 'item3']
+  });
+  assert.strictEqual(result2.processed, true);
+  assert.strictEqual(result2.name, 'Charlie');
+  assert.strictEqual(result2.itemCount, 3);
+  assert.strictEqual(result2.isAdult, true);
 
-console.log('3. Test ProcessObject - object processing:');
-const result3 = hello.processObject({
-	name: 'Charlie',
-	age: 25,
-	items: ['item1', 'item2', 'item3']
+  const syncCallbacks = await new Promise((resolve, reject) => {
+    const events = [];
+    const result3 = hello.helloWithCallback({ test: 'sync-check' }, (data) => {
+      events.push(data);
+      if (events.length === 3) {
+        resolve({ result: result3, events });
+      }
+    });
+
+    setTimeout(() => reject(new Error('Timed out waiting for helloWithCallback events')), 4000);
+  });
+  assert.strictEqual(syncCallbacks.result.status, 'success');
+  assert.strictEqual(syncCallbacks.events.length, 3);
+  assert(syncCallbacks.events.every((item, index) => item.result === `Callback ${index + 1}`));
+  assert(syncCallbacks.events.every((item) => item.test === 'sync-check'));
+
+  const asyncCallbacks = await new Promise((resolve, reject) => {
+    const events = [];
+
+    const result4 = hello.asyncHello({ test: 'async-check' }, (data) => {
+      events.push(data);
+    });
+
+    assert.strictEqual(result4.status, 'success');
+    assert.strictEqual(result4.result, 'Async started');
+
+    setTimeout(() => resolve({ result: result4, events }), 1500);
+  });
+
+  assert.strictEqual(asyncCallbacks.events.length, 0);
+
+  console.log('test/test.js passed');
+  process.exit(0);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
 });
-console.log('Result:', result3);
-console.log();
-
-console.log('4. Test Calculate - different operations:');
-const result4a = hello.calculate({ a: 10, b: 5, operation: 'add' });
-console.log('Add (10 + 5):', result4a);
-
-const result4b = hello.calculate({ a: 10, b: 5, operation: 'subtract' });
-console.log('Subtract (10 - 5):', result4b);
-
-const result4c = hello.calculate({ a: 10, b: 5, operation: 'multiply' });
-console.log('Multiply (10 * 5):', result4c);
-
-const result4d = hello.calculate({ a: 10, b: 5, operation: 'divide' });
-console.log('Divide (10 / 5):', result4d);
-console.log();
-
-console.log('5. Test HelloWithCallback - synchronous callback:');
-const result5 = hello.helloWithCallback({ test: 'Hello from Node' }, (data) => {
-	console.log('Callback received:', data);
-});
-console.log('Result:', result5);
-console.log();
-
-console.log('6. Test AsyncHello - asynchronous callback:');
-const result6 = hello.asyncHello({ test: 'Async test' }, (data) => {
-	console.log('Async callback received:', data);
-});
-console.log('Result:', result6);
-console.log();
-
-console.log('7. Test NoReturn - no return value:');
-const result7 = hello.noReturn({});
-console.log('Result:', result7);
-console.log();
-
-console.log('=== All tests completed ===');

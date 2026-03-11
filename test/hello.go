@@ -8,6 +8,7 @@ import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 	"unsafe"
 )
@@ -17,6 +18,40 @@ var gCallNodeCallback uintptr
 //export RegisterGoCallback
 func RegisterGoCallback(fn uintptr) {
 	gCallNodeCallback = fn
+}
+
+type nodeCallback struct {
+	id    int32
+	token string
+}
+
+func newNodeCallback(raw *C.char) nodeCallback {
+	if gCallNodeCallback == 0 || raw == nil {
+		return nodeCallback{id: -1}
+	}
+
+	token := C.GoString(raw)
+	callbackID, err := strconv.Atoi(token)
+	if err != nil {
+		return nodeCallback{id: -1, token: token}
+	}
+
+	return nodeCallback{
+		id:    int32(callbackID),
+		token: token,
+	}
+}
+
+func (cb nodeCallback) send(data map[string]interface{}) {
+	if gCallNodeCallback == 0 || cb.id < 0 {
+		return
+	}
+
+	jsonData, _ := json.Marshal(data)
+	cJSON := C.CString(string(jsonData))
+	defer C.free(unsafe.Pointer(cJSON))
+
+	C.callCallbackWithId(unsafe.Pointer(gCallNodeCallback), C.int32_t(cb.id), cJSON)
 }
 
 //export Hello1
@@ -51,30 +86,25 @@ func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
-	cbType := C.GoString(callbackType)
+	callback := newNodeCallback(callbackType)
 
 	testMsg := "default"
 	if msg, ok := inputData["test"].(string); ok {
 		testMsg = msg
 	}
 
-	if gCallNodeCallback != 0 {
-		for i := 1; i <= 3; i++ {
-			time.Sleep(300 * time.Millisecond)
+	for i := 1; i <= 3; i++ {
+		time.Sleep(300 * time.Millisecond)
 
-			callbackData := map[string]interface{}{
-				"callbackType": cbType,
-				"test":         testMsg,
-				"result":       fmt.Sprintf("Callback %d", i),
-			}
-			jsonData, _ := json.Marshal(callbackData)
-
-			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
-		}
+		callback.send(map[string]interface{}{
+			"callbackType": callback.token,
+			"test":         testMsg,
+			"result":       fmt.Sprintf("Callback %d", i),
+		})
 	}
 
 	resultData := map[string]interface{}{
-		"callbackType": cbType,
+		"callbackType": callback.token,
 		"status":       "success",
 		"result":       42,
 	}
@@ -88,30 +118,27 @@ func AsyncHello(params *C.char, callbackType *C.char) *C.char {
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
-	cbType := C.GoString(callbackType)
+	callback := newNodeCallback(callbackType)
 
 	testMsg := "default"
 	if msg, ok := inputData["test"].(string); ok {
 		testMsg = msg
 	}
 
-	go func() {
+	go func(cb nodeCallback, msg string) {
 		for i := 1; i <= 5; i++ {
 			time.Sleep(500 * time.Millisecond)
 
-			callbackData := map[string]interface{}{
-				"callbackType": cbType,
-				"test":         testMsg,
+			cb.send(map[string]interface{}{
+				"callbackType": cb.token,
+				"test":         msg,
 				"result":       fmt.Sprintf("Async callback %d", i),
-			}
-			jsonData, _ := json.Marshal(callbackData)
-
-			C.callCallback(unsafe.Pointer(gCallNodeCallback), C.CString(string(jsonData)))
+			})
 		}
-	}()
+	}(callback, testMsg)
 
 	resultData := map[string]interface{}{
-		"callbackType": cbType,
+		"callbackType": callback.token,
 		"status":       "success",
 		"result":       "Async started",
 	}
