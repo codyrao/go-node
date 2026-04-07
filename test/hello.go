@@ -1,64 +1,22 @@
 package main
 
-/*
-#cgo CFLAGS: -I.
-#include "callback.h"
-*/
 import "C"
+
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
-	"unsafe"
 )
 
-var gCallNodeCallback uintptr
-
-//export RegisterGoCallback
-func RegisterGoCallback(fn uintptr) {
-	gCallNodeCallback = fn
-}
-
-type nodeCallback struct {
-	id    int32
-	token string
-}
-
-func newNodeCallback(raw *C.char) nodeCallback {
-	if gCallNodeCallback == 0 || raw == nil {
-		return nodeCallback{id: -1}
-	}
-
-	token := C.GoString(raw)
-	callbackID, err := strconv.Atoi(token)
-	if err != nil {
-		return nodeCallback{id: -1, token: token}
-	}
-
-	return nodeCallback{
-		id:    int32(callbackID),
-		token: token,
-	}
-}
-
-func (cb nodeCallback) send(data map[string]interface{}) {
-	if gCallNodeCallback == 0 || cb.id < 0 {
-		return
-	}
-
-	jsonData, _ := json.Marshal(data)
-	cJSON := C.CString(string(jsonData))
-	defer C.free(unsafe.Pointer(cJSON))
-
-	C.callCallbackWithId(unsafe.Pointer(gCallNodeCallback), C.int32_t(cb.id), cJSON)
-}
-
+// Hello1 doubles the provided value and echoes the request fields for basic wrapper verification.
+//
 //export Hello1
 func Hello1(params *C.char, callbackType *C.char) *C.char {
+	// Decode the input payload so the sample can validate JSON object argument handling.
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
+	// Extract typed fields with permissive defaults because sample inputs come from dynamic JavaScript values.
 	name := ""
 	if n, ok := inputData["name"].(string); ok {
 		name = n
@@ -69,6 +27,7 @@ func Hello1(params *C.char, callbackType *C.char) *C.char {
 		value = int(v)
 	}
 
+	// Build the response payload that demonstrates successful synchronous execution.
 	result := value * 2
 
 	resultData := map[string]interface{}{
@@ -81,11 +40,15 @@ func Hello1(params *C.char, callbackType *C.char) *C.char {
 	return C.CString(string(resultJson))
 }
 
+// HelloWithCallback emits three synchronous callbacks before returning a final success payload.
+//
 //export HelloWithCallback
 func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
+	// Decode input first so callback payloads can echo a caller-provided test marker.
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
+	// Resolve the callback token into the shared callback runtime representation.
 	callback := newNodeCallback(callbackType)
 
 	testMsg := "default"
@@ -93,6 +56,7 @@ func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
 		testMsg = msg
 	}
 
+	// Send a small deterministic callback sequence so the JavaScript test can assert ordering and payload shape.
 	for i := 1; i <= 3; i++ {
 		time.Sleep(300 * time.Millisecond)
 
@@ -103,6 +67,7 @@ func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
 		})
 	}
 
+	// Return a final JSON payload after the callback sequence completes.
 	resultData := map[string]interface{}{
 		"callbackType": callback.token,
 		"status":       "success",
@@ -113,11 +78,15 @@ func HelloWithCallback(params *C.char, callbackType *C.char) *C.char {
 	return C.CString(string(resultJson))
 }
 
+// AsyncHello starts a background callback sequence and returns immediately to exercise async callback handling.
+//
 //export AsyncHello
 func AsyncHello(params *C.char, callbackType *C.char) *C.char {
+	// Decode input so the asynchronous payloads can include the caller-provided marker string.
 	var inputData map[string]interface{}
 	json.Unmarshal([]byte(C.GoString(params)), &inputData)
 
+	// Resolve the callback token before starting the goroutine so later callback sends use stable data.
 	callback := newNodeCallback(callbackType)
 
 	testMsg := "default"
@@ -125,6 +94,7 @@ func AsyncHello(params *C.char, callbackType *C.char) *C.char {
 		testMsg = msg
 	}
 
+	// Emit callbacks from a goroutine to verify the wrapper's async callback queueing behavior.
 	go func(cb nodeCallback, msg string) {
 		for i := 1; i <= 5; i++ {
 			time.Sleep(500 * time.Millisecond)
@@ -137,6 +107,7 @@ func AsyncHello(params *C.char, callbackType *C.char) *C.char {
 		}
 	}(callback, testMsg)
 
+	// Return immediately so JavaScript can observe that callbacks continue after the function returns.
 	resultData := map[string]interface{}{
 		"callbackType": callback.token,
 		"status":       "success",
@@ -147,11 +118,15 @@ func AsyncHello(params *C.char, callbackType *C.char) *C.char {
 	return C.CString(string(resultJson))
 }
 
+// ProcessObject transforms an input object and returns derived fields that exercise object marshalling.
+//
 //export ProcessObject
 func ProcessObject(params *C.char, callbackType *C.char) *C.char {
+	// Decode the incoming object so the sample can enrich it with derived metadata.
 	var objectData map[string]interface{}
 	json.Unmarshal([]byte(C.GoString(params)), &objectData)
 
+	// Seed the response with generic processing metadata before copying user-provided fields.
 	processed := map[string]interface{}{
 		"processed": true,
 		"timestamp": time.Now().Unix(),
@@ -175,8 +150,7 @@ func ProcessObject(params *C.char, callbackType *C.char) *C.char {
 		processed["itemCount"] = len(items)
 	}
 
+	// Serialize the enriched object back to JSON for the wrapper to return into JavaScript.
 	resultJson, _ := json.Marshal(processed)
 	return C.CString(string(resultJson))
 }
-
-func main() {}

@@ -10,6 +10,14 @@ import (
 func generateCallbackHeader(workDir string) error {
 	// Keep header generation inside the source directory so local includes keep working.
 	headerPath := filepath.Join(workDir, "callback.h")
+	markerPath := filepath.Join(workDir, generatedCallbackHeaderMarkerName)
+
+	// Preserve checked-in callback headers so repository-owned sample files remain self-contained.
+	if _, err := os.Stat(headerPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 
 	content := `/* Auto-generated callback header for go-node */
 #ifndef GO_NODE_CALLBACK_H
@@ -71,6 +79,9 @@ static void freeCallback(void* ptr, int32_t callbackId) {
 	if _, err := file.WriteString(content); err != nil {
 		return err
 	}
+	if err := os.WriteFile(markerPath, []byte("generated"), 0644); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -82,6 +93,7 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 
 	funcDecls := ""
 	funcImpls := ""
+	funcResets := ""
 	nodeMethods := ""
 
 	// Emit one wrapper function per export while skipping internal bridge symbols.
@@ -95,6 +107,7 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 
 		funcDecls += "typedef const char* (*" + funcName + "Fn)(const char*, const char*);\n" +
 			funcName + "Fn " + funcName + "Ptr = NULL;\n\n"
+		funcResets += "    " + funcName + "Ptr = NULL;\n"
 
 		funcImpls += "void " + funcName + "Wrapper(const FunctionCallbackInfo<Value>& args) {\n" +
 			"    Isolate* isolate = args.GetIsolate();\n" +
@@ -143,7 +156,9 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 			"        arg2 = callbackToken.c_str();\n" +
 			"    }\n" +
 			"    \n" +
+			"    activeExportCalls.fetch_add(1);\n" +
 			"    const char* result = " + funcName + "Ptr(arg1, arg2);\n" +
+			"    activeExportCalls.fetch_sub(1);\n" +
 			"    if (callbackId >= 0) {\n" +
 			"        ReleaseCallback(callbackId);\n" +
 			"    }\n" +
@@ -174,6 +189,7 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 #include <queue>
 #include <mutex>
 #include <fstream>
+#include <atomic>
 
 #pragma warning(disable: 4018)
 #pragma warning(disable: 4996)
@@ -251,6 +267,39 @@ void CleanupEmbeddedDLL(const std::string& dllPath) {
     }
 }
 
+// Parse a JSON string through the JavaScript JSON object to avoid V8 ABI-specific JSON::Parse symbols.
+Local<Value> ParseJSONString(Isolate* isolate, Local<Context> context, Local<String> jsonString) {
+    Local<String> jsonKey;
+    if (!String::NewFromUtf8(isolate, "JSON", NewStringType::kNormal).ToLocal(&jsonKey)) {
+        return Null(isolate);
+    }
+
+    Local<Value> jsonValue;
+    if (!context->Global()->Get(context, jsonKey).ToLocal(&jsonValue) || !jsonValue->IsObject()) {
+        return Null(isolate);
+    }
+
+    Local<Object> jsonObject = jsonValue.As<Object>();
+    Local<String> parseKey;
+    if (!String::NewFromUtf8(isolate, "parse", NewStringType::kNormal).ToLocal(&parseKey)) {
+        return Null(isolate);
+    }
+
+    Local<Value> parseValue;
+    if (!jsonObject->Get(context, parseKey).ToLocal(&parseValue) || !parseValue->IsFunction()) {
+        return Null(isolate);
+    }
+
+    Local<Function> parseFunction = parseValue.As<Function>();
+    Local<Value> argv[] = { jsonString };
+    Local<Value> parsed;
+    if (!parseFunction->Call(context, jsonObject, 1, argv).ToLocal(&parsed)) {
+        return Null(isolate);
+    }
+
+    return parsed;
+}
+
 // Parse JSON result and return object type
 Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
     if (jsonStr == NULL || strlen(jsonStr) == 0) {
@@ -264,11 +313,8 @@ Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
     }
     Local<Context> context = isolate->GetCurrentContext();
 
-    // Parse using JSON::Parse to avoid script compilation overhead.
-    Local<Value> parsed;
-    if (!JSON::Parse(context, jsonString).ToLocal(&parsed)) {
-        return Null(isolate);
-    }
+    // Parse through JSON.parse so the generated wrapper stays compatible across V8 ABI changes.
+    Local<Value> parsed = ParseJSONString(isolate, context, jsonString);
     
     // Only return object type
     if (parsed->IsObject()) {
@@ -292,6 +338,15 @@ std::map<int32_t, CallbackEntry> callbackMap;
 int32_t nextCallbackId = 0;
 Isolate* gIsolate = NULL;
 std::mutex callbackMutex;
+std::atomic<uint32_t> activeExportCalls(0);
+std::atomic<uint32_t> queuedCallbackCount(0);
+std::atomic<uint32_t> activeCallbackDispatches(0);
+std::atomic<bool> legacyCallbackSafetyLock(false);
+bool supportsManagedCallbacks = false;
+typedef void (*CallNodeCallbackType)(int32_t, const char*);
+typedef void (*CallbackControlType)(int32_t);
+typedef void (*FreeCStringFn)(const char*);
+FreeCStringFn freeCStringPtr = NULL;
 
 // Async callback handling
 struct CallbackData {
@@ -302,6 +357,25 @@ struct CallbackData {
 std::queue<CallbackData> callbackQueue;
 std::mutex queueMutex;
 uv_async_t async_handle;
+
+void ResetDLLState() {
+    freeCStringPtr = NULL;
+    supportsManagedCallbacks = false;
+    legacyCallbackSafetyLock.store(false);
+` + funcResets + `    hDLL = NULL;
+}
+
+bool HasActiveWrapperWork() {
+    return activeExportCalls.load() > 0 || queuedCallbackCount.load() > 0 || activeCallbackDispatches.load() > 0 || legacyCallbackSafetyLock.load();
+}
+
+void ReleaseCurrentDLL() {
+    HMODULE currentDLL = hDLL;
+    ResetDLLState();
+    if (currentDLL != NULL) {
+        FreeLibrary(currentDLL);
+    }
+}
 
 void AsyncCallback(uv_async_t* handle) {
     Isolate* isolate = gIsolate;
@@ -322,6 +396,9 @@ void AsyncCallback(uv_async_t* handle) {
             data = callbackQueue.front();
             callbackQueue.pop();
         }
+        if (queuedCallbackCount.load() > 0) {
+            queuedCallbackCount.fetch_sub(1);
+        }
 
         Local<Function> callback;
         {
@@ -340,17 +417,26 @@ void AsyncCallback(uv_async_t* handle) {
         
         Local<String> jsonString;
         Local<Value> parsedData;
+        activeCallbackDispatches.fetch_add(1);
+        TryCatch tryCatch(isolate);
 
         if (String::NewFromUtf8(isolate, data.jsonData.c_str(), NewStringType::kNormal, data.jsonData.length()).ToLocal(&jsonString) &&
-            JSON::Parse(context, jsonString).ToLocal(&parsedData) &&
+            !(parsedData = ParseJSONString(isolate, context, jsonString)).IsEmpty() &&
             parsedData->IsObject()) {
             Local<Value> argv[] = { parsedData };
-            callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
+            MaybeLocal<Value> callbackResult = callback->Call(context, Null(isolate), 1, argv);
+            if (callbackResult.IsEmpty() && tryCatch.HasCaught()) {
+                isolate->ThrowException(tryCatch.Exception());
+            }
         } else {
             Local<Object> emptyObj = Object::New(isolate);
             Local<Value> argv[] = { emptyObj };
-            callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
+            MaybeLocal<Value> callbackResult = callback->Call(context, Null(isolate), 1, argv);
+            if (callbackResult.IsEmpty() && tryCatch.HasCaught()) {
+                isolate->ThrowException(tryCatch.Exception());
+            }
         }
+        activeCallbackDispatches.fetch_sub(1);
 
         {
             std::lock_guard<std::mutex> lock(callbackMutex);
@@ -362,7 +448,6 @@ void AsyncCallback(uv_async_t* handle) {
             if (it->second.pendingCount > 0) {
                 it->second.pendingCount--;
             }
-
             if (it->second.closed && it->second.pendingCount == 0 && it->second.activeCalls == 0) {
                 it->second.callback.Reset();
                 callbackMap.erase(it);
@@ -389,26 +474,30 @@ int32_t RegisterCallback(Isolate* isolate, Local<Function> callback) {
     entry.pendingCount = 0;
     entry.activeCalls = 1;
     callbackMap[id] = std::move(entry);
+    if (!supportsManagedCallbacks) {
+        legacyCallbackSafetyLock.store(true);
+    }
 
     return id;
 }
-
-typedef void (*CallNodeCallbackType)(int32_t, const char*);
-typedef void (*CallbackControlType)(int32_t);
-typedef void (*FreeCStringFn)(const char*);
-FreeCStringFn freeCStringPtr = NULL;
 
 void CallNodeCallback(int32_t callbackId, const char* jsonData);
 void KeepCallback(int32_t callbackId);
 void CloseCallback(int32_t callbackId);
 
 bool BindGoRuntimeFunctions() {
+    if (hDLL == NULL) {
+        return false;
+    }
+
     freeCStringPtr = (FreeCStringFn)GetProcAddress(hDLL, "FreeCString");
+    supportsManagedCallbacks = false;
 
     typedef void (*RegisterGoCallbackType)(CallNodeCallbackType);
     typedef void (*RegisterGoCallbackExType)(CallNodeCallbackType, CallbackControlType, CallbackControlType);
     RegisterGoCallbackExType registerGoCallbackEx = (RegisterGoCallbackExType)GetProcAddress(hDLL, "RegisterGoCallbackEx");
     if (registerGoCallbackEx != NULL) {
+        supportsManagedCallbacks = true;
         registerGoCallbackEx(CallNodeCallback, KeepCallback, CloseCallback);
         return true;
     }
@@ -440,6 +529,7 @@ void CallNodeCallback(int32_t callbackId, const char* jsonData) {
         std::lock_guard<std::mutex> lock(queueMutex);
         callbackQueue.push(data);
     }
+    queuedCallbackCount.fetch_add(1);
     
     uv_async_send(&async_handle);
 }
@@ -507,10 +597,16 @@ void LoadGoLibrary(const FunctionCallbackInfo<Value>& args) {
     String::Utf8Value dllPath(isolate, args[0]);
     
     if (hDLL != NULL) {
-        FreeLibrary(hDLL);
+        if (HasActiveWrapperWork()) {
+            isolate->ThrowException(Exception::Error(
+                String::NewFromUtf8(isolate, "Cannot replace Go library while callbacks or exported calls are still active").ToLocalChecked()));
+            return;
+        }
+        ReleaseCurrentDLL();
     }
     hDLL = LoadLibraryA(*dllPath);
     if (hDLL == NULL) {
+        ResetDLLState();
         isolate->ThrowException(Exception::Error(
             String::NewFromUtf8(isolate, "Failed to load DLL").ToLocalChecked()));
         return;
@@ -526,15 +622,18 @@ void UnloadGoLibrary(const FunctionCallbackInfo<Value>& args) {
     
     std::lock_guard<std::mutex> lock(callbackMutex);
 
+    if (HasActiveWrapperWork()) {
+        isolate->ThrowException(Exception::Error(
+            String::NewFromUtf8(isolate, "Cannot unload Go library while callbacks or exported calls are still active").ToLocalChecked()));
+        return;
+    }
+
     for (auto& pair : callbackMap) {
         pair.second.callback.Reset();
     }
     callbackMap.clear();
     
-    if (hDLL != NULL) {
-        FreeLibrary(hDLL);
-        hDLL = NULL;
-    }
+    ReleaseCurrentDLL();
     
     args.GetReturnValue().Set(True(isolate));
 }
@@ -591,10 +690,16 @@ void InitializeWrapper(const FunctionCallbackInfo<Value>& args) {
         String::Utf8Value dllPath(isolate, args[0]);
         
         if (hDLL != NULL) {
-            FreeLibrary(hDLL);
+            if (HasActiveWrapperWork()) {
+                isolate->ThrowException(Exception::Error(
+                    String::NewFromUtf8(isolate, "Cannot replace Go library while callbacks or exported calls are still active").ToLocalChecked()));
+                return;
+            }
+            ReleaseCurrentDLL();
         }
         hDLL = LoadLibraryA(*dllPath);
         if (hDLL == NULL) {
+            ResetDLLState();
             isolate->ThrowException(Exception::Error(
                 String::NewFromUtf8(isolate, "Failed to load Go library").ToLocalChecked()));
             return;

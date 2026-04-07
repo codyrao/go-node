@@ -135,7 +135,7 @@ func run(cfg *Config) error {
 	fmt.Printf("Working directory: %s\n", workDir)
 	fmt.Printf("Temporary directory: %s\n\n", tmpDirAbs)
 
-	if err := cleanupBuild(workDir); err != nil {
+	if err := cleanupStaleBuildArtifacts(workDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Failed to cleanup build directory: %v\n", err)
 		return fmt.Errorf("cleanup build directory failed: %w", err)
 	}

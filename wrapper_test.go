@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// TestGenerateWrapperCCUsesJSONParse ensures generated wrapper code uses JSON::Parse instead of script compilation.
-func TestGenerateWrapperCCUsesJSONParse(t *testing.T) {
+// TestGenerateWrapperCCUsesJSONParseCompatibilityHelper ensures generated wrapper code avoids direct JSON::Parse symbol dependencies.
+func TestGenerateWrapperCCUsesJSONParseCompatibilityHelper(t *testing.T) {
 	// Create an isolated workspace so generation side effects stay local to this test.
 	workDir := t.TempDir()
 
@@ -22,12 +22,15 @@ func TestGenerateWrapperCCUsesJSONParse(t *testing.T) {
 	}
 	content := string(data)
 
-	// Assert the optimized JSON path is present and legacy Script::Compile parsing is absent.
-	if !strings.Contains(content, "JSON::Parse(context, jsonString)") {
-		t.Fatalf("expected generated wrapper to contain JSON::Parse")
+	// Assert the generated wrapper uses a V8-version-safe helper instead of linking directly to JSON::Parse.
+	if !strings.Contains(content, "Local<Value> ParseJSONString(") {
+		t.Fatalf("expected generated wrapper to define ParseJSONString")
 	}
-	if strings.Contains(content, "Script::Compile(") {
-		t.Fatalf("expected generated wrapper to avoid Script::Compile")
+	if !strings.Contains(content, "parseFunction->Call(context, jsonObject, 1, argv)") {
+		t.Fatalf("expected generated wrapper to invoke JSON.parse through the global JSON object")
+	}
+	if strings.Contains(content, "JSON::Parse(") {
+		t.Fatalf("expected generated wrapper to avoid direct JSON::Parse calls")
 	}
 }
 
@@ -87,5 +90,95 @@ func FreeCallback(id int32) {}
 	}
 	if len(functions) != 1 || functions[0] != "Hello1" {
 		t.Fatalf("unexpected exported function list: %#v", functions)
+	}
+}
+
+// TestGenerateWrapperCCResetsDLLStateOnReload verifies generated wrapper code clears cached DLL state before unload and reload operations.
+func TestGenerateWrapperCCResetsDLLStateOnReload(t *testing.T) {
+	// Create an isolated workspace so the generated wrapper can be inspected deterministically.
+	workDir := t.TempDir()
+
+	// Generate wrapper code for one export and load the file content for assertions.
+	if err := generateWrapperCC(workDir, "hello", []string{"Hello1"}, ""); err != nil {
+		t.Fatalf("generateWrapperCC returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(workDir, "wrapper.cc"))
+	if err != nil {
+		t.Fatalf("failed to read generated wrapper.cc: %v", err)
+	}
+	content := string(data)
+
+	// Require an explicit DLL state reset helper and per-function pointer clearing to avoid stale addresses.
+	if !strings.Contains(content, "void ResetDLLState()") {
+		t.Fatalf("expected generated wrapper to define ResetDLLState")
+	}
+	if !strings.Contains(content, "Hello1Ptr = NULL;") {
+		t.Fatalf("expected generated wrapper to clear cached export function pointers")
+	}
+	if !strings.Contains(content, "ResetDLLState();") {
+		t.Fatalf("expected generated wrapper to call ResetDLLState during DLL lifecycle transitions")
+	}
+}
+
+// TestGenerateWrapperCCBlocksUnsafeUnload verifies generated wrapper code rejects unload and reload while wrapper work is still active.
+func TestGenerateWrapperCCBlocksUnsafeUnload(t *testing.T) {
+	// Create an isolated workspace so the generated wrapper can be inspected deterministically.
+	workDir := t.TempDir()
+
+	// Generate wrapper code for one export and load the file content for assertions.
+	if err := generateWrapperCC(workDir, "hello", []string{"Hello1"}, ""); err != nil {
+		t.Fatalf("generateWrapperCC returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(workDir, "wrapper.cc"))
+	if err != nil {
+		t.Fatalf("failed to read generated wrapper.cc: %v", err)
+	}
+	content := string(data)
+
+	// Require active-work tracking so wrapper cannot unload a DLL while Go code or callbacks still depend on it.
+	if !strings.Contains(content, "bool HasActiveWrapperWork()") {
+		t.Fatalf("expected generated wrapper to define HasActiveWrapperWork")
+	}
+	if !strings.Contains(content, "activeExportCalls") {
+		t.Fatalf("expected generated wrapper to track in-flight exported function calls")
+	}
+	if !strings.Contains(content, "legacyCallbackSafetyLock") {
+		t.Fatalf("expected generated wrapper to preserve unload safety for legacy callback registrations")
+	}
+	if !strings.Contains(content, "supportsManagedCallbacks") {
+		t.Fatalf("expected generated wrapper to distinguish managed callback support from legacy callback support")
+	}
+	if !strings.Contains(content, "Cannot unload Go library while callbacks or exported calls are still active") {
+		t.Fatalf("expected generated wrapper to reject unsafe DLL unload")
+	}
+	if !strings.Contains(content, "Cannot replace Go library while callbacks or exported calls are still active") {
+		t.Fatalf("expected generated wrapper to reject unsafe DLL reload")
+	}
+}
+
+// TestGenerateWrapperCCHandlesCallbackExceptionsSafely verifies generated wrapper code avoids fatal V8 unchecked callback invocation.
+func TestGenerateWrapperCCHandlesCallbackExceptionsSafely(t *testing.T) {
+	// Create an isolated workspace so the generated wrapper can be inspected deterministically.
+	workDir := t.TempDir()
+
+	// Generate wrapper code for one export and load the file content for assertions.
+	if err := generateWrapperCC(workDir, "hello", []string{"Hello1"}, ""); err != nil {
+		t.Fatalf("generateWrapperCC returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(workDir, "wrapper.cc"))
+	if err != nil {
+		t.Fatalf("failed to read generated wrapper.cc: %v", err)
+	}
+	content := string(data)
+
+	// Require safe callback execution that preserves JS exceptions instead of terminating the host process.
+	if !strings.Contains(content, "TryCatch tryCatch(isolate);") {
+		t.Fatalf("expected generated wrapper to guard callback invocation with TryCatch")
+	}
+	if !strings.Contains(content, "MaybeLocal<Value> callbackResult = callback->Call(context, Null(isolate), 1, argv);") {
+		t.Fatalf("expected generated wrapper to capture callback call results without ToLocalChecked")
+	}
+	if strings.Contains(content, "callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();") {
+		t.Fatalf("expected generated wrapper to avoid ToLocalChecked on callback invocation")
 	}
 }
