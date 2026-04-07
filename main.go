@@ -5,10 +5,14 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+const toolName = "go-node"
+const toolVersion = "0.1.0"
 
 type Config struct {
 	InputFile   string
@@ -19,51 +23,99 @@ type Config struct {
 	NoCleanup   bool
 	BuildDLL    bool
 	ElectronVer string
+	ShowVersion bool
 }
 
+// main parses command-line flags and executes the requested CLI action.
 func main() {
-	config := parseFlags()
-
-	if err := run(config); err != nil {
+	// Execute the CLI with the process-standard streams so normal shell usage stays unchanged.
+	if err := execute(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func parseFlags() *Config {
-	cfg := &Config{}
-	flag.StringVar(&cfg.InputFile, "input", "", "Input Go source file path")
-	flag.StringVar(&cfg.OutputDir, "output", "./output", "Output directory, default ./output")
-	flag.StringVar(&cfg.ModuleName, "name", "", "Module name")
-	flag.StringVar(&cfg.PackageName, "package", "main", "Go package name, default main (only functions in main package will be compiled)")
-	flag.StringVar(&cfg.SourceDir, "source", "", "Go source file directory")
-	flag.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Do not cleanup temporary files after compilation")
-	flag.BoolVar(&cfg.BuildDLL, "dll", false, "Build DLL file instead of Node.js native module (for node-ffi)")
-	flag.StringVar(&cfg.ElectronVer, "ev", "", "Electron version (e.g., 28.0.0). If not specified, uses node-gyp's default Node.js version")
-
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, `Go2Node - Compile Go code to Node.js native module
-
-Usage:
-  go2node [options]
-
-Options:
-`)
-		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, `
-Examples:
-  go2node -input=hello.go -name=hello
-  go2node -input=hello.go -name=hello -output=./dist
-  go2node -input=hello.go -name=hello -dll
-`)
+// execute parses CLI arguments, handles version-only output, and runs the main build workflow.
+func execute(args []string, stdout, stderr io.Writer) error {
+	// Parse arguments first so version requests can short-circuit before build validation runs.
+	config, err := parseFlags(args, stderr)
+	if err != nil {
+		return err
 	}
 
-	flag.Parse()
+	// Print the pinned tool version immediately when the user requests version output.
+	if config.ShowVersion {
+		_, err := fmt.Fprintln(stdout, toolVersion)
+		return err
+	}
 
-	return cfg
+	// Delegate normal compilation requests to the existing build workflow.
+	return run(config)
 }
 
+// parseFlags parses the provided command-line arguments into a CLI configuration.
+func parseFlags(args []string, stderr io.Writer) (*Config, error) {
+	// Use a dedicated FlagSet so tests can parse arguments without mutating global process flags.
+	flagSet := flag.NewFlagSet(toolName, flag.ContinueOnError)
+	flagSet.SetOutput(stderr)
+	cfg := &Config{}
+	flagSet.StringVar(&cfg.InputFile, "input", "", "Input Go source file path")
+	flagSet.StringVar(&cfg.OutputDir, "output", "./output", "Output directory, default ./output")
+	flagSet.StringVar(&cfg.ModuleName, "name", "", "Module name")
+	flagSet.StringVar(&cfg.PackageName, "package", "main", "Go package name, default main (only functions in main package will be compiled)")
+	flagSet.StringVar(&cfg.SourceDir, "source", "", "Go source file directory")
+	flagSet.BoolVar(&cfg.NoCleanup, "no-cleanup", false, "Do not cleanup temporary files after compilation")
+	flagSet.BoolVar(&cfg.BuildDLL, "dll", false, "Build DLL file instead of Node.js native module (for node-ffi)")
+	flagSet.StringVar(&cfg.ElectronVer, "ev", "", "Electron version (e.g., 28.0.0). If not specified, uses node-gyp's default Node.js version")
+	flagSet.BoolVar(&cfg.ShowVersion, "version", false, "Print go-node version and exit")
+
+	flagSet.Usage = func() {
+		// Render a stable help banner and examples so the CLI consistently presents the go-node name.
+		fmt.Fprint(stderr, usageBanner())
+		flagSet.PrintDefaults()
+		fmt.Fprint(stderr, usageExamples())
+	}
+
+	// Parse the caller-provided arguments against the dedicated FlagSet.
+	if err := flagSet.Parse(args); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// usageBanner returns the static CLI help header shown before the generated flag table.
+func usageBanner() string {
+	// Keep banner text centralized so tests can lock the public tool name to go-node.
+	return `go-node - Compile Go code to Node.js native module
+
+Usage:
+  go-node [options]
+
+Options:
+`
+}
+
+// usageExamples returns the static example block appended after the flag table in CLI help output.
+func usageExamples() string {
+	// Keep examples centralized so command-name changes stay synchronized across help text.
+	return `
+Examples:
+  go-node -input=hello.go -name=hello
+  go-node -input=hello.go -name=hello -output=./dist
+  go-node -input=hello.go -name=hello -dll
+`
+}
+
+// run validates build configuration and executes the go-node compilation workflow.
 func run(cfg *Config) error {
+	// Allow version-only calls to bypass all build validation even when run is invoked directly in tests.
+	if cfg.ShowVersion {
+		fmt.Println(toolVersion)
+		return nil
+	}
+
+	// Validate required user input before deriving paths or writing any build artifacts.
 	if cfg.InputFile == "" {
 		fmt.Fprintln(os.Stderr, "Error: Please specify input Go source file (-input)")
 		return fmt.Errorf("input file not specified")
@@ -239,7 +291,9 @@ func run(cfg *Config) error {
 	return nil
 }
 
+// generateHexArray converts raw DLL bytes into a C-style hex array declaration string.
 func generateHexArray(data []byte) string {
+	// Append one byte at a time so generated declarations remain deterministic and compact.
 	var hex strings.Builder
 	hex.WriteString("unsigned char dllData[] = {")
 	for i, b := range data {
@@ -252,6 +306,8 @@ func generateHexArray(data []byte) string {
 	return hex.String()
 }
 
+// init retains the existing strings package reference used by older builds.
 func init() {
+	// Keep a no-op strings call so the compiler preserves the import in this generated-tool entrypoint.
 	strings.Contains("", "")
 }

@@ -1,4 +1,4 @@
-# Go2Node - 将 Go 代码编译为 Node.js 原生模块
+# go-node - 将 Go 代码编译为 Node.js 原生模块
 
 一个用 Go 实现的命令行工具，可以将 Go 代码编译成 Node.js 可调用的原生模块（.node 文件）。
 
@@ -74,6 +74,7 @@ go-node -input=your_file.go -name=module_name
 | `-source` | 否 | `-input` 目录 | Go 源文件目录 |
 | `-no-cleanup` | 否 | false | 编译后不清理临时文件 |
 | `-ev` | 否 | - | Electron 版本（如 28.0.0）。如未指定，使用 node-gyp 的默认 Node.js 版本 |
+| `-version`, `--version` | 否 | false | 打印 go-node 版本号并退出 |
 
 ### 使用示例
 
@@ -89,6 +90,9 @@ go-node -input=hello.go -name=hello -ev=28.0.0
 
 # 不清理临时文件（用于调试）
 go-node -input=hello.go -name=hello -no-cleanup
+
+# 打印版本号
+go-node --version
 ```
 
 ### 输出文件

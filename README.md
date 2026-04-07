@@ -1,4 +1,4 @@
-# Go2Node - Compile Go Code to Node.js Native Module
+# go-node - Compile Go Code to Node.js Native Module
 
 A command-line tool implemented in Go that compiles Go code into Node.js callable native modules (.node files).
 
@@ -74,6 +74,7 @@ go-node -input=your_file.go -name=module_name
 | `-source` | No | `-input` directory | Go source file directory |
 | `-no-cleanup` | No | false | Do not clean up temporary files after compilation |
 | `-ev` | No | - | Electron version (e.g., 28.0.0). If not specified, uses node-gyp's default Node.js version |
+| `-version`, `--version` | No | false | Print the go-node version and exit |
 
 ### Examples
 
@@ -89,6 +90,9 @@ go-node -input=hello.go -name=hello -ev=28.0.0
 
 # Do not clean up temporary files (for debugging)
 go-node -input=hello.go -name=hello -no-cleanup
+
+# Print version
+go-node --version
 ```
 
 ### Output Files
