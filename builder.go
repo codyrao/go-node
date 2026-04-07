@@ -8,11 +8,16 @@ import (
 	"strings"
 )
 
+const generatedRuntimeHelperName = "go_node_runtime.go"
+
+// buildGoSharedLibrary compiles user Go code into a DLL and injects runtime helper exports used by the Node wrapper.
 func buildGoSharedLibrary(cfg *Config, workDir string) error {
+	// Normalize the work directory first so path operations stay deterministic.
 	workDir = filepath.Clean(workDir)
 
 	dllPath := filepath.Join(workDir, "build", cfg.ModuleName+".dll")
 
+	// Resolve input file as a workDir-relative path because the command runs with cmd.Dir=workDir.
 	goFile := cfg.InputFile
 	if filepath.IsAbs(goFile) {
 		relPath, err := filepath.Rel(workDir, goFile)
@@ -23,14 +28,24 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 		goFile = relPath
 	}
 
+	// Generate helper exports (for example FreeCString) so wrapper memory ownership stays in the Go DLL.
+	helperPath, err := generateRuntimeHelperFile(workDir, cfg.PackageName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to generate runtime helper file: %v\n", err)
+		return fmt.Errorf("generate runtime helper file failed: %w", err)
+	}
+	helperFile := filepath.Base(helperPath)
+
 	args := []string{
 		"build",
 		"-buildmode=c-shared",
-		"-ldflags", "-s -w",
+		"-trimpath",
+		"-buildvcs=false",
+		"-ldflags", "-s -w -buildid=",
 		"-o", dllPath,
 	}
 
-	args = append(args, goFile)
+	args = append(args, goFile, helperFile)
 
 	cmd := exec.Command("go", args...)
 	cmd.Env = append(os.Environ(),
@@ -41,8 +56,8 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 		"GOARCH=amd64",
 		"GO111MODULE=on",
 		"GOPROXY=direct",
-		"CGO_CFLAGS=-I. -Os",
-		"CGO_LDFLAGS=-s -w",
+		"CGO_CFLAGS=-I. -Os -ffunction-sections -fdata-sections",
+		"CGO_LDFLAGS=-s -w -Wl,--gc-sections",
 	)
 	cmd.Dir = workDir
 	cmd.Stdout = os.Stdout
@@ -75,7 +90,46 @@ func buildGoSharedLibrary(cfg *Config, workDir string) error {
 	return nil
 }
 
+// generateRuntimeHelperFile writes a temporary Go source file that exports helpers required by generated wrapper code.
+func generateRuntimeHelperFile(workDir, packageName string) (string, error) {
+	// Keep package naming aligned with user input while falling back to main for safety.
+	if strings.TrimSpace(packageName) == "" {
+		packageName = "main"
+	}
+
+	// Keep helper minimal to avoid inflating binary size while providing explicit free semantics.
+	content := `package ` + packageName + `
+
+/*
+#include <stdlib.h>
+*/
+import "C"
+import "unsafe"
+
+// FreeCString releases a C string allocated inside the Go shared library.
+//
+//export FreeCString
+func FreeCString(ptr *C.char) {
+	// Guard against nil pointers to keep release operation idempotent.
+	if ptr == nil {
+		return
+	}
+
+	// Free inside the same DLL allocator boundary to avoid cross-runtime deallocation issues.
+	C.free(unsafe.Pointer(ptr))
+}
+`
+
+	helperPath := filepath.Join(workDir, generatedRuntimeHelperName)
+	if err := os.WriteFile(helperPath, []byte(content), 0644); err != nil {
+		return "", err
+	}
+	return helperPath, nil
+}
+
+// createBuildDirectory ensures the build output directory exists before compilation starts.
 func createBuildDirectory(workDir string) error {
+	// Create the build directory eagerly so later steps can write outputs without repeated checks.
 	buildDir := filepath.Join(workDir, "build")
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		return fmt.Errorf("Failed to create build directory: %w", err)
@@ -83,7 +137,9 @@ func createBuildDirectory(workDir string) error {
 	return nil
 }
 
+// cleanupBuild removes generated build artifacts that should not persist across runs.
 func cleanupBuild(workDir string) error {
+	// Remove the build directory so stale DLLs and intermediate files do not contaminate the next run.
 	buildDir := filepath.Join(workDir, "build")
 	if _, err := os.Stat(buildDir); err == nil {
 		if err := os.RemoveAll(buildDir); err != nil {
@@ -91,6 +147,7 @@ func cleanupBuild(workDir string) error {
 		}
 	}
 
+	// Remove generated callback header from source directory.
 	callbackHeader := filepath.Join(workDir, "callback.h")
 	if _, err := os.Stat(callbackHeader); err == nil {
 		if err := os.Remove(callbackHeader); err != nil {
@@ -98,16 +155,27 @@ func cleanupBuild(workDir string) error {
 		}
 	}
 
+	// Remove generated runtime helper file from source directory.
+	runtimeHelperPath := filepath.Join(workDir, generatedRuntimeHelperName)
+	if _, err := os.Stat(runtimeHelperPath); err == nil {
+		if err := os.Remove(runtimeHelperPath); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
+// copyFile copies one file to another location without loading the full file into memory.
 func copyFile(src, dst string) error {
+	// Open source first so early failures do not create destination files.
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer srcFile.Close()
 
+	// Create destination file and stream bytes directly from source.
 	dstFile, err := os.Create(dst)
 	if err != nil {
 		return err
@@ -118,12 +186,16 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// fileExists reports whether the path currently exists.
 func fileExists(path string) bool {
+	// Rely on os.Stat to keep existence checks cheap and platform-independent.
 	_, err := os.Stat(path)
 	return err == nil
 }
 
+// getFileExt returns the lowercase file extension of a path.
 func getFileExt(path string) string {
+	// Normalize extension casing to simplify extension comparisons across platforms.
 	ext := filepath.Ext(path)
 	return strings.ToLower(ext)
 }

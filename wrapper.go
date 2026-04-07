@@ -6,7 +6,9 @@ import (
 	"strings"
 )
 
+// generateCallbackHeader writes callback bridge declarations used during cgo compilation.
 func generateCallbackHeader(workDir string) error {
+	// Keep header generation inside the source directory so local includes keep working.
 	headerPath := filepath.Join(workDir, "callback.h")
 
 	content := `/* Auto-generated callback header for go-node */
@@ -65,6 +67,7 @@ static void freeCallback(void* ptr, int32_t callbackId) {
 	}
 	defer file.Close()
 
+	// Persist the generated callback declarations for this build run.
 	if _, err := file.WriteString(content); err != nil {
 		return err
 	}
@@ -72,13 +75,16 @@ static void freeCallback(void* ptr, int32_t callbackId) {
 	return nil
 }
 
+// generateWrapperCC creates the C++ Node addon wrapper used to call into exported Go DLL symbols.
 func generateWrapperCC(workDir, moduleName string, functions []string, hexArray string) error {
+	// Resolve one deterministic output file path for generated wrapper source.
 	wrapperPath := filepath.Join(workDir, "wrapper.cc")
 
 	funcDecls := ""
 	funcImpls := ""
 	nodeMethods := ""
 
+	// Emit one wrapper function per export while skipping internal bridge symbols.
 	for _, fn := range functions {
 		funcName := fn
 		jsName := toCamelCase(fn)
@@ -92,6 +98,7 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 
 		funcImpls += "void " + funcName + "Wrapper(const FunctionCallbackInfo<Value>& args) {\n" +
 			"    Isolate* isolate = args.GetIsolate();\n" +
+			"    Local<Context> context = isolate->GetCurrentContext();\n" +
 			"    \n" +
 			"    if (hDLL == NULL) {\n" +
 			"        isolate->ThrowException(Exception::Error(\n" +
@@ -114,13 +121,20 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 			"    int32_t callbackId = -1;\n" +
 			"    const char* arg2 = \"\";\n" +
 			"    \n" +
-			"    if (args.Length() > 0 && args[0]->IsObject() && !args[0]->IsArray()) {\n" +
-			"        Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
-			"        Local<Context> context = isolate->GetCurrentContext();\n" +
-			"        Local<String> jsonStr = v8::JSON::Stringify(context, obj).ToLocalChecked();\n" +
-			"        String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
-			"        arg1 = strdup(*jsonUtf8);\n" +
-			"        freeArg1 = true;\n" +
+			"    if (args.Length() > 0) {\n" +
+			"        if (args[0]->IsString()) {\n" +
+			"            String::Utf8Value utf8(isolate, args[0]);\n" +
+			"            arg1 = strdup(*utf8);\n" +
+			"            freeArg1 = true;\n" +
+			"        } else if (args[0]->IsObject() && !args[0]->IsArray()) {\n" +
+			"            Local<Object> obj = Local<Object>::Cast(args[0]);\n" +
+			"            Local<String> jsonStr;\n" +
+			"            if (v8::JSON::Stringify(context, obj).ToLocal(&jsonStr)) {\n" +
+			"                String::Utf8Value jsonUtf8(isolate, jsonStr);\n" +
+			"                arg1 = strdup(*jsonUtf8);\n" +
+			"                freeArg1 = true;\n" +
+			"            }\n" +
+			"        }\n" +
 			"    }\n" +
 			"    \n" +
 			"    if (args.Length() > 1 && args[1]->IsFunction()) {\n" +
@@ -141,11 +155,15 @@ func generateWrapperCC(workDir, moduleName string, functions []string, hexArray 
 			"        Local<Value> parsedResult = ParseJSONResult(isolate, result);\n" +
 			"        args.GetReturnValue().Set(parsedResult);\n" +
 			"    }\n" +
+			"    if (freeCStringPtr != NULL && result != NULL) {\n" +
+			"        freeCStringPtr(result);\n" +
+			"    }\n" +
 			"}\n\n"
 
 		nodeMethods += "    NODE_SET_METHOD(exports, \"" + jsName + "\", " + funcName + "Wrapper);\n"
 	}
 
+	// Render C++ template content after all function-specific fragments are prepared.
 	content := `#include <node.h>
 #include <v8.h>
 #include <uv.h>
@@ -238,25 +256,17 @@ Local<Value> ParseJSONResult(Isolate* isolate, const char* jsonStr) {
     if (jsonStr == NULL || strlen(jsonStr) == 0) {
         return Null(isolate);
     }
-    
-    // Use UTF-8 encoding explicitly
-    Local<String> jsonString = String::NewFromUtf8(isolate, jsonStr, 
-        NewStringType::kNormal, strlen(jsonStr)).ToLocalChecked();
-    Local<Context> context = isolate->GetCurrentContext();
-    
-    // Wrap JSON string in parentheses to make it a valid JavaScript expression
-    std::string wrappedJson = "(" + std::string(jsonStr) + ")";
-    Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str(), 
-        NewStringType::kNormal, wrappedJson.length()).ToLocalChecked();
-    
-    TryCatch tryCatch(isolate);
-    Local<Script> script;
-    if (!Script::Compile(context, wrappedJsonStr).ToLocal(&script)) {
+
+    // Decode UTF-8 bytes into a V8 string before parsing JSON.
+    Local<String> jsonString;
+    if (!String::NewFromUtf8(isolate, jsonStr, NewStringType::kNormal, strlen(jsonStr)).ToLocal(&jsonString)) {
         return Null(isolate);
     }
-    
+    Local<Context> context = isolate->GetCurrentContext();
+
+    // Parse using JSON::Parse to avoid script compilation overhead.
     Local<Value> parsed;
-    if (!script->Run(context).ToLocal(&parsed)) {
+    if (!JSON::Parse(context, jsonString).ToLocal(&parsed)) {
         return Null(isolate);
     }
     
@@ -328,16 +338,12 @@ void AsyncCallback(uv_async_t* handle) {
             continue;
         }
         
-        // Wrap JSON string in parentheses to make it a valid JavaScript expression
-        std::string wrappedJson = "(" + data.jsonData + ")";
-        Local<String> wrappedJsonStr = String::NewFromUtf8(isolate, wrappedJson.c_str(), 
-            NewStringType::kNormal, wrappedJson.length()).ToLocalChecked();
-        
-        TryCatch tryCatch(isolate);
-        Local<Script> script;
+        Local<String> jsonString;
         Local<Value> parsedData;
-        
-        if (Script::Compile(context, wrappedJsonStr).ToLocal(&script) && script->Run(context).ToLocal(&parsedData) && parsedData->IsObject()) {
+
+        if (String::NewFromUtf8(isolate, data.jsonData.c_str(), NewStringType::kNormal, data.jsonData.length()).ToLocal(&jsonString) &&
+            JSON::Parse(context, jsonString).ToLocal(&parsedData) &&
+            parsedData->IsObject()) {
             Local<Value> argv[] = { parsedData };
             callback->Call(context, Null(isolate), 1, argv).ToLocalChecked();
         } else {
@@ -389,6 +395,31 @@ int32_t RegisterCallback(Isolate* isolate, Local<Function> callback) {
 
 typedef void (*CallNodeCallbackType)(int32_t, const char*);
 typedef void (*CallbackControlType)(int32_t);
+typedef void (*FreeCStringFn)(const char*);
+FreeCStringFn freeCStringPtr = NULL;
+
+void CallNodeCallback(int32_t callbackId, const char* jsonData);
+void KeepCallback(int32_t callbackId);
+void CloseCallback(int32_t callbackId);
+
+bool BindGoRuntimeFunctions() {
+    freeCStringPtr = (FreeCStringFn)GetProcAddress(hDLL, "FreeCString");
+
+    typedef void (*RegisterGoCallbackType)(CallNodeCallbackType);
+    typedef void (*RegisterGoCallbackExType)(CallNodeCallbackType, CallbackControlType, CallbackControlType);
+    RegisterGoCallbackExType registerGoCallbackEx = (RegisterGoCallbackExType)GetProcAddress(hDLL, "RegisterGoCallbackEx");
+    if (registerGoCallbackEx != NULL) {
+        registerGoCallbackEx(CallNodeCallback, KeepCallback, CloseCallback);
+        return true;
+    }
+
+    RegisterGoCallbackType registerGoCallback = (RegisterGoCallbackType)GetProcAddress(hDLL, "RegisterGoCallback");
+    if (registerGoCallback != NULL) {
+        registerGoCallback(CallNodeCallback);
+    }
+
+    return true;
+}
 
 void CallNodeCallback(int32_t callbackId, const char* jsonData) {
     {
@@ -484,6 +515,8 @@ void LoadGoLibrary(const FunctionCallbackInfo<Value>& args) {
             String::NewFromUtf8(isolate, "Failed to load DLL").ToLocalChecked()));
         return;
     }
+
+    BindGoRuntimeFunctions();
     
     args.GetReturnValue().Set(True(isolate));
 }
@@ -543,18 +576,7 @@ void Initialize(Local<Object> exports) {
         return;
     }
     
-    // Register callback function in Go DLL
-    typedef void (*RegisterGoCallbackType)(CallNodeCallbackType);
-    typedef void (*RegisterGoCallbackExType)(CallNodeCallbackType, CallbackControlType, CallbackControlType);
-    RegisterGoCallbackExType registerGoCallbackEx = (RegisterGoCallbackExType)GetProcAddress(hDLL, "RegisterGoCallbackEx");
-    if (registerGoCallbackEx != NULL) {
-        registerGoCallbackEx(CallNodeCallback, KeepCallback, CloseCallback);
-    } else {
-        RegisterGoCallbackType registerGoCallback = (RegisterGoCallbackType)GetProcAddress(hDLL, "RegisterGoCallback");
-        if (registerGoCallback != NULL) {
-            registerGoCallback(CallNodeCallback);
-        }
-    }
+    BindGoRuntimeFunctions();
     
     NODE_SET_METHOD(exports, "init", InitializeWrapper);
     NODE_SET_METHOD(exports, "loadLibrary", LoadGoLibrary);
@@ -578,18 +600,7 @@ void InitializeWrapper(const FunctionCallbackInfo<Value>& args) {
             return;
         }
         
-        // Register callback function in Go DLL
-        typedef void (*RegisterGoCallbackType)(CallNodeCallbackType);
-        typedef void (*RegisterGoCallbackExType)(CallNodeCallbackType, CallbackControlType, CallbackControlType);
-        RegisterGoCallbackExType registerGoCallbackEx = (RegisterGoCallbackExType)GetProcAddress(hDLL, "RegisterGoCallbackEx");
-        if (registerGoCallbackEx != NULL) {
-            registerGoCallbackEx(CallNodeCallback, KeepCallback, CloseCallback);
-        } else {
-            RegisterGoCallbackType registerGoCallback = (RegisterGoCallbackType)GetProcAddress(hDLL, "RegisterGoCallback");
-            if (registerGoCallback != NULL) {
-                registerGoCallback(CallNodeCallback);
-            }
-        }
+        BindGoRuntimeFunctions();
     }
     
     args.GetReturnValue().Set(True(isolate));
@@ -610,14 +621,20 @@ NODE_MODULE(` + moduleName + `, Initialize)`
 	return nil
 }
 
+// toCamelCase converts exported Go function names to JavaScript-style camelCase names.
 func toCamelCase(s string) string {
+	// Return early for empty identifiers.
 	if len(s) == 0 {
 		return s
 	}
+
+	// Split by underscore to support snake_case export names.
 	parts := strings.Split(s, "_")
 	if len(parts) == 1 {
 		return strings.ToLower(s[:1]) + s[1:]
 	}
+
+	// Lowercase the first part and capitalize the following parts to build camelCase.
 	for i := 0; i < len(parts); i++ {
 		if len(parts[i]) > 0 {
 			if i == 0 {
@@ -630,7 +647,9 @@ func toCamelCase(s string) string {
 	return strings.Join(parts, "")
 }
 
+// parseGoExports scans source code and returns names annotated with //export markers.
 func parseGoExports(goFile string) ([]string, error) {
+	// Read full source content so export scanning can run in one pass.
 	content, err := os.ReadFile(goFile)
 	if err != nil {
 		return nil, err
@@ -639,6 +658,7 @@ func parseGoExports(goFile string) ([]string, error) {
 	var functions []string
 	lines := strings.Split(string(content), "\n")
 
+	// Filter out bridge-internal exports and keep user-facing symbols only.
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 

@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-04-04T14:05:56.503Z",
+  "nodeVersion": "v24.12.0",
+  "modulePath": "C:\\Users\\admin\\Documents\\goproject\\xlasgame\\go-node\\.perf-manual\\candidate-output\\hello.node",
+  "iterations": 1000,
+  "warmup": 200,
+  "benchmarks": [
+    {
+      "name": "hello1_object",
+      "iterations": 1000,
+      "warmup": 200,
+      "avgNs": 8579.4,
+      "p50Ns": 7400,
+      "p95Ns": 12700,
+      "ops": 116558.26747791222
+    },
+    {
+      "name": "process_object",
+      "iterations": 1000,
+      "warmup": 200,
+      "avgNs": 13564.2,
+      "p50Ns": 11200,
+      "p95Ns": 18500,
+      "ops": 73723.47797879712
+    }
+  ]
+}

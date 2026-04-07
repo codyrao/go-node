@@ -1,0 +1,33 @@
+﻿{
+    "generatedAt":  "2026-04-04T22:05:18.0401577+08:00",
+    "repoRoot":  "C:\\Users\\admin\\Documents\\goproject\\xlasgame\\go-node",
+    "baseline":  {
+                     "source":  "prebuilt",
+                     "metrics":  {
+                                     "nodePath":  "C:\\Users\\admin\\Documents\\goproject\\xlasgame\\go-node\\.perf-manual\\baseline-output\\hello.node",
+                                     "nodeBytes":  2177024,
+                                     "resourceBytes":  1909760,
+                                     "wrapperBytes":  267264,
+                                     "resourcePct":  87.72
+                                 },
+                     "benchmark":  null
+                 },
+    "candidate":  {
+                      "source":  "prebuilt",
+                      "metrics":  {
+                                      "nodePath":  "C:\\Users\\admin\\Documents\\goproject\\xlasgame\\go-node\\.perf-manual\\candidate-output\\hello.node",
+                                      "nodeBytes":  2144768,
+                                      "resourceBytes":  1904128,
+                                      "wrapperBytes":  240640,
+                                      "resourcePct":  88.78
+                                  },
+                      "benchmark":  null
+                  },
+    "summary":  {
+                    "nodeSizeDeltaPct":  -1.48,
+                    "benchmarkSkipped":  true,
+                    "benchmarkDiff":  [
+
+                                      ]
+                }
+}
